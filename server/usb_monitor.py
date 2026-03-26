@@ -2,6 +2,7 @@
 UsbMonitor — обнаружение USB-флешек через pyudev.
 Запускается как daemon-поток; работает только на Linux.
 """
+import subprocess
 import threading
 import logging
 from typing import Dict, List, Optional, Callable
@@ -66,6 +67,7 @@ def _monitor_loop():
             with _lock:
                 _devices[info["node"]] = info
             log.info("USB inserted: %s %s (%s)", info["vendor"], info["model"], info["node"])
+            _beep(1000, 300)          # один писк при вставке
             if on_inserted:
                 on_inserted(info)
 
@@ -73,6 +75,7 @@ def _monitor_loop():
             with _lock:
                 _devices.pop(info["node"], None)
             log.info("USB removed: %s %s (%s)", info["vendor"], info["model"], info["node"])
+            _beep(600, 200, repeat=2) # два коротких писка при извлечении
             if on_removed:
                 on_removed(info)
 
@@ -86,6 +89,17 @@ def start():
 
 def stop():
     _stop_event.set()
+
+
+def _beep(freq: int, duration_ms: int, repeat: int = 1):
+    """Пищать через beep (PC-спикер). Не блокирует основной поток."""
+    try:
+        args = ["beep", "-f", str(freq), "-l", str(duration_ms)]
+        if repeat > 1:
+            args += ["-r", str(repeat)]
+        subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        pass  # beep не установлен — молчим
 
 
 def get_devices() -> List[dict]:
