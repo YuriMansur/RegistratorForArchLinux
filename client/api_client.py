@@ -45,3 +45,9 @@ def get_tags() -> list[dict]:
     r = requests.get(_url("/tags/latest"), timeout=TIMEOUT)
     r.raise_for_status()
     return r.json()
+
+
+def get_usb_devices() -> list[dict]:
+    r = requests.get(_url("/usb/devices"), timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.json()

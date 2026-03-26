@@ -3,8 +3,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base
-from routers import records, tags
+from routers import records, tags, usb
 from protocol_backend.server_manager import ServerManager
+import usb_monitor
 
 Base.metadata.create_all(bind=engine)
 
@@ -16,7 +17,9 @@ async def lifespan(_app: FastAPI):
     global _server_manager
     _server_manager = ServerManager()
     _server_manager.start()
+    usb_monitor.start()
     yield
+    usb_monitor.stop()
     if _server_manager:
         _server_manager.stop()
 
@@ -32,6 +35,7 @@ app.add_middleware(
 
 app.include_router(records.router)
 app.include_router(tags.router)
+app.include_router(usb.router)
 
 
 @app.get("/health")

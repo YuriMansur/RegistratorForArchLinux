@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QTableWidget, QTableWidgetItem, QMessageBox,
     QLabel, QHeaderView, QStatusBar, QTabWidget,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 import api_client
 from ui.record_form import RecordFormDialog
 from ui.settings_dialog import SettingsDialog
@@ -69,6 +69,15 @@ class MainWindow(QMainWindow):
         # Status
         self.status_label = QLabel("Нет подключения")
         self.statusBar().addWidget(self.status_label)
+
+        self.usb_label = QLabel("USB: —")
+        self.statusBar().addPermanentWidget(self.usb_label)
+
+        # USB polling timer
+        self._usb_timer = QTimer(self)
+        self._usb_timer.timeout.connect(self._poll_usb)
+        self._usb_timer.start(3000)
+        self._poll_usb()
 
         # Signals
         self.btn_add.clicked.connect(self._on_add)
@@ -162,6 +171,21 @@ class MainWindow(QMainWindow):
                 self._load_records()
             except requests.RequestException as e:
                 QMessageBox.critical(self, "Ошибка", str(e))
+
+    def _poll_usb(self):
+        try:
+            devices = api_client.get_usb_devices()
+        except Exception:
+            self.usb_label.setText("USB: —")
+            return
+        if not devices:
+            self.usb_label.setText("USB: не подключена")
+        else:
+            names = ", ".join(
+                f"{d.get('vendor', '')} {d.get('model', '')} ({d.get('node', '')})".strip()
+                for d in devices
+            )
+            self.usb_label.setText(f"USB: {names}")
 
     def _on_settings(self):
         dlg = SettingsDialog(self)
