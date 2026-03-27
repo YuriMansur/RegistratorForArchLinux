@@ -175,9 +175,20 @@ class MainWindow(QMainWindow):
     def _poll_usb(self):
         try:
             devices = api_client.get_usb_devices()
+            export_status = api_client.get_usb_export_status()
         except Exception:
             self.usb_label.setText("USB: —")
             return
+
+        _STATUS_LABELS = {
+            "idle":    "",
+            "waiting": " | ожидание монтирования...",
+            "writing": " | Запись...",
+            "done":    " | Готово",
+            "error":   " | Ошибка записи",
+        }
+        status_text = _STATUS_LABELS.get(export_status, "")
+
         if not devices:
             self.usb_label.setText("USB: не подключена")
         else:
@@ -185,7 +196,7 @@ class MainWindow(QMainWindow):
                 f"{d.get('vendor', '')} {d.get('model', '')} ({d.get('node', '')})".strip()
                 for d in devices
             )
-            self.usb_label.setText(f"USB: {names}")
+            self.usb_label.setText(f"USB: {names}{status_text}")
 
     def _on_settings(self):
         dlg = SettingsDialog(self)

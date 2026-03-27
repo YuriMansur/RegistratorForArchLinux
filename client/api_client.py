@@ -51,3 +51,9 @@ def get_usb_devices() -> list[dict]:
     r = requests.get(_url("/usb/devices"), timeout=TIMEOUT)
     r.raise_for_status()
     return r.json()
+
+
+def get_usb_export_status() -> str:
+    r = requests.get(_url("/usb/export-status"), timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.json().get("status", "idle")

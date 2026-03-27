@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, DateTime, func
+from sqlalchemy import String, DateTime, Integer, func
 from sqlalchemy.orm import Mapped, mapped_column
 from database import Base
 
@@ -24,3 +24,14 @@ class TagValue(Base):
     tag_name: Mapped[str] = mapped_column(String(255), default="")
     value: Mapped[str] = mapped_column(String(1000), default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class TagHistory(Base):
+    """История всех значений OPC UA тегов с временными метками."""
+    __tablename__ = "tag_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tag_id: Mapped[str] = mapped_column(String(512), index=True)
+    tag_name: Mapped[str] = mapped_column(String(255), default="")
+    value: Mapped[str] = mapped_column(String(1000), default="")
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

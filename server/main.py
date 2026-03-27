@@ -6,6 +6,7 @@ from database import engine, Base
 from routers import records, tags, usb
 from protocol_backend.server_manager import ServerManager
 import usb_monitor
+import usb_exporter
 
 Base.metadata.create_all(bind=engine)
 
@@ -17,6 +18,8 @@ async def lifespan(_app: FastAPI):
     global _server_manager
     _server_manager = ServerManager()
     _server_manager.start()
+    usb_monitor.on_inserted = usb_exporter.export_on_insert
+    usb_monitor.on_removed = lambda _: usb_exporter._set_status("idle")
     usb_monitor.start()
     yield
     usb_monitor.stop()
