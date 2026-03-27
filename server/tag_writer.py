@@ -4,21 +4,32 @@
 """
 from datetime import datetime
 from database import SessionLocal
-from models import TagValue
+from models import TagValue, TagHistory
 
 
 def write_tag(tag_id: str, value, tag_name: str = "") -> None:
-    """Записать (или обновить) последнее значение тега в БД."""
+    """Записать (или обновить) последнее значение тега и добавить запись в историю."""
+    serialized = _serialize(value)
+    now = datetime.utcnow()
     db = SessionLocal()
     try:
+        # Обновляем последнее значение
         row = db.get(TagValue, tag_id)
         if row is None:
             row = TagValue(tag_id=tag_id, tag_name=tag_name or tag_id)
             db.add(row)
-        row.value = _serialize(value)
-        row.updated_at = datetime.utcnow()
+        row.value = serialized
+        row.updated_at = now
         if tag_name:
             row.tag_name = tag_name
+
+        # Пишем в историю
+        db.add(TagHistory(
+            tag_id=tag_id,
+            tag_name=tag_name or tag_id,
+            value=serialized,
+            recorded_at=now,
+        ))
         db.commit()
     finally:
         db.close()
