@@ -7,7 +7,6 @@ from asyncua import Client, Node
 from asyncua.common.subscription import Subscription, DataChangeNotif
 from .opcua_security_mixin import SecurityMixin
 from .opcua_lifecycle_mixin import LifecycleMixin
-from .opcua_events_mixin import EventsMixin
 from .opcua_exploration_mixin import ExplorationMixin
 from .opcua_config_mixin import ConfigMixin
 
@@ -96,7 +95,7 @@ class SubscriptionHandler:
 
 
 # Асинхронный OPC UA клиент
-class AsyncOpcUaWorker(SecurityMixin, LifecycleMixin, EventsMixin, ExplorationMixin, ConfigMixin):
+class AsyncOpcUaWorker(SecurityMixin, LifecycleMixin, ExplorationMixin, ConfigMixin):
     def __init__(
         self,
         endpoint                : str,
@@ -223,12 +222,6 @@ class AsyncOpcUaWorker(SecurityMixin, LifecycleMixin, EventsMixin, ExplorationMi
             "total_uptime_s": 0.0,
         }
 
-        # --- Event Subscription ---
-        # Подписка на события (аварии, условия) — отдельно от data change подписок.
-        # Структура: {key: {"sub": Subscription, "handle": int}}
-        self._event_subscriptions: Dict[str, Dict[str, Any]] = {}
-        self._on_event: Optional[Callable[[Dict[str, Any]], None]] = None
-
 
 # Подключение к серверу
     async def connect(self) -> bool:
@@ -312,13 +305,6 @@ class AsyncOpcUaWorker(SecurityMixin, LifecycleMixin, EventsMixin, ExplorationMi
             # Очищаем кэш Node-объектов — они привязаны к старому Client
             self._node_cache.clear()
             self._write_type_cache.clear()
-            # Удаляем event подписки на сервере и очищаем реестр
-            for key, ev in list(self._event_subscriptions.items()):
-                try:
-                    await ev["sub"].delete()
-                except Exception as e:
-                    logger.warning(f"Failed to delete event subscription '{key}': {e}")
-            self._event_subscriptions.clear()
             return True
         except Exception as e:
             raise RuntimeError(f"Failed to disconnect: {e}")
