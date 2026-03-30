@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 CONFIG_FILE = Path(__file__).parent / "config.json"
-DEFAULT_HOST = "192.168.1.100"
+DEFAULT_HOST = "192.168.100.100"
 DEFAULT_PORT = 8000
 
 

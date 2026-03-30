@@ -1,6 +1,6 @@
 from fastapi import APIRouter
-import usb_monitor
-import usb_exporter
+import server.usb.usb_monitor as usb_monitor
+import server.usb.usb_exporter as usb_exporter
 
 router = APIRouter(prefix="/usb", tags=["usb"])
 

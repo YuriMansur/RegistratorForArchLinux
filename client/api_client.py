@@ -47,6 +47,12 @@ def get_tags() -> list[dict]:
     return r.json()
 
 
+def get_history(limit: int = 1000) -> list[dict]:
+    r = requests.get(_url("/history"), params={"limit": limit}, timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
 def get_usb_devices() -> list[dict]:
     r = requests.get(_url("/usb/devices"), timeout=TIMEOUT)
     r.raise_for_status()

@@ -82,7 +82,7 @@ class OpcUaWorkerThread(threading.Thread):
         asyncio.set_event_loop(self.loop)
         self.loop.set_debug(False)
 
-        from protocol_backend.thread.opcua.worker.opcua_worker import AsyncOpcUaWorker
+        from protocol_backend.protocol_client.opcua.opcua_worker.opcua_worker import AsyncOpcUaWorker
 
         self.worker = AsyncOpcUaWorker(
             endpoint=self.endpoint,
