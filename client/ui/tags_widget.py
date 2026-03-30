@@ -1,10 +1,18 @@
 import requests
+from datetime import datetime, timezone
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QTableWidget, QTableWidgetItem, QPushButton, QSpinBox, QHeaderView,
+    QWidget, QVBoxLayout, QLabel,
+    QTableWidget, QTableWidgetItem, QHeaderView,
 )
 from PyQt6.QtCore import QTimer
 import api_client
+
+
+def _utc_to_local(utc_str: str) -> str:
+    dt = datetime.fromisoformat(utc_str).replace(tzinfo=timezone.utc)
+    return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+_POLL_INTERVAL_MS = 1000
 
 
 class TagsWidget(QWidget):
@@ -18,27 +26,13 @@ class TagsWidget(QWidget):
     def _build_ui(self):
         layout = QVBoxLayout(self)
 
-        # Toolbar
-        toolbar = QHBoxLayout()
-        toolbar.addWidget(QLabel("Теги OPC UA — последние значения"))
-        toolbar.addStretch()
-        toolbar.addWidget(QLabel("Обновление каждые:"))
-        self.interval_spin = QSpinBox()
-        self.interval_spin.setRange(1, 60)
-        self.interval_spin.setValue(2)
-        self.interval_spin.setSuffix(" сек")
-        self.interval_spin.valueChanged.connect(self._restart_polling)
-        toolbar.addWidget(self.interval_spin)
-        self.btn_refresh = QPushButton("Обновить")
-        self.btn_refresh.clicked.connect(self._load)
-        toolbar.addWidget(self.btn_refresh)
-        layout.addLayout(toolbar)
+        layout.addWidget(QLabel("Теги OPC UA — последние значения"))
 
-        # Table
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Тег (Node ID)", "Имя", "Значение", "Обновлено"])
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["Имя", "Значение", "Обновлено"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         layout.addWidget(self.table)
@@ -49,11 +43,8 @@ class TagsWidget(QWidget):
     def _start_polling(self):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._load)
-        self._timer.start(self.interval_spin.value() * 1000)
+        self._timer.start(_POLL_INTERVAL_MS)
         self._load()
-
-    def _restart_polling(self):
-        self._timer.start(self.interval_spin.value() * 1000)
 
     def _load(self):
         try:
@@ -68,8 +59,7 @@ class TagsWidget(QWidget):
         for tag in tags:
             row = self.table.rowCount()
             self.table.insertRow(row)
-            self.table.setItem(row, 0, QTableWidgetItem(tag["tag_id"]))
-            self.table.setItem(row, 1, QTableWidgetItem(tag["tag_name"]))
-            self.table.setItem(row, 2, QTableWidgetItem(tag["value"]))
-            updated = tag["updated_at"][:19].replace("T", " ")
-            self.table.setItem(row, 3, QTableWidgetItem(updated))
+            self.table.setItem(row, 0, QTableWidgetItem(tag["tag_name"]))
+            self.table.setItem(row, 1, QTableWidgetItem(tag["value"]))
+            updated = _utc_to_local(tag["updated_at"][:19])
+            self.table.setItem(row, 2, QTableWidgetItem(updated))

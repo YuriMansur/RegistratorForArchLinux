@@ -31,3 +31,13 @@ class TagValueOut(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class TagHistoryOut(BaseModel):
+    id: int
+    tag_id: int | None = None
+    tag_name: str = ""
+    value: str
+    recorded_at: datetime
+
+    model_config = {"from_attributes": True}

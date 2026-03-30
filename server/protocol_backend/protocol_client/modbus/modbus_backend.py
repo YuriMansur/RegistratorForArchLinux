@@ -109,8 +109,8 @@ import asyncio
 import threading
 from concurrent.futures import Future
 
-from protocol_backend.backend.thread.modbustcp.modbus_worker_thread import PLCWorkerThread
-from protocol_backend.backend.thread.modbustcp.regs_convert import ConvertProtocolData
+from protocol_backend.protocol_client.modbus.tcp.modbus_worker_thread import PLCWorkerThread
+from protocol_backend.protocol_client.modbus.tcp.regs_convert import ConvertProtocolData
 
 
 class ModbusBackend(QObject):

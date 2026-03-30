@@ -4,7 +4,7 @@ PyQt6 не используется — коммуникация через Pyth
 """
 import logging
 from typing import Dict, Optional, Callable, Any, List
-from protocol_backend.thread.opcua.opcua_worker_thread import OpcUaWorkerThread
+from protocol_backend.protocol_client.opcua.opcua_thread.opcua_worker_thread import OpcUaWorkerThread
 
 log = logging.getLogger(__name__)
 

@@ -1,9 +1,12 @@
 import re
 import logging
 import threading
-from protocol_backend.opcua_backend import OpcUaBackend
-from protocol_backend.tags.tags import Dev_192_168_10_10_OPC_Tags as Tags
-import tag_writer
+from datetime import datetime, timezone
+from protocol_backend.protocol_client.opcua.opcua_backend.opcua_backend import OpcUaBackend
+from protocol_backend.protocol_client.opcua_tags import Dev_192_168_10_10_OPC_Tags as Tags
+from db import tag_writer
+from db import session_exporter
+from db import test_manager
 
 
 # ── Конфигурация серверов ─────────────────────────────────────────────────────
@@ -13,7 +16,7 @@ _SERVERS = [
         "endpoint"          : "opc.tcp://192.168.10.10:4840",
         "auto_reconnect"    : True,
         "reconnect_interval": 5,
-        "subscribe"         : [],
+        "subscribe"         : [Tags.inProcess, Tags.End],
         "polls"             : [
             {"name": "arrays", "nodes": [Tags.ForUra], "interval": 1.0, "sequential": True},
         ],
@@ -21,6 +24,14 @@ _SERVERS = [
 ]
 
 log = logging.getLogger(__name__)
+
+# Обратный маппинг: node_id → имя переменной из класса тегов
+_NODE_NAMES: dict[str, str] = {
+    v: k for k, v in vars(Tags).items() if not k.startswith("_")
+}
+
+
+_CONTROL_TAGS = {Tags.inProcess, Tags.End}
 
 
 class ServerManager:
@@ -30,6 +41,9 @@ class ServerManager:
         self._backend = OpcUaBackend()
         self._timers: dict[str, threading.Timer] = {}
         self._config: dict[str, dict] = {}
+        self._recording: bool = False
+        self._session_start: datetime | None = None
+        self._current_test_id: int | None = None
         self._setup()
 
     # ── Публичный API ─────────────────────────────────────────────────────────
@@ -81,6 +95,7 @@ class ServerManager:
                 srv, poll["name"], poll["nodes"],
                 poll["interval"], poll.get("sequential", False)
             )
+        self._backend.start_watchdog(srv, interval=10.0)
 
     def _on_disconnected(self, srv: str):
         log.warning("Disconnected from %s", srv)
@@ -107,7 +122,40 @@ class ServerManager:
     def _on_data_received(self, srv: str, nid: str, val):
         """Единая точка входа для всех данных от PLC → пишем в SQLite."""
         nid = self._normalize_nid(nid)
-        tag_writer.write_tag(tag_id=nid, value=val, tag_name=nid)
+        tag_name = _NODE_NAMES.get(nid, nid)
+
+        # Управляющие теги — обновляем значение, но не пишем в историю
+        if nid in _CONTROL_TAGS:
+            tag_writer.write_tag(tag_id=nid, value=val, tag_name=tag_name, record_history=False)
+            self._handle_control(nid, val)
+            return
+
+        # Обычные теги — пишем в историю только во время сессии
+        tag_writer.write_tag(
+            tag_id=nid, value=val, tag_name=tag_name,
+            record_history=self._recording,
+            test_id=self._current_test_id,
+        )
+
+    def _handle_control(self, nid: str, val):
+        if nid == Tags.inProcess and bool(val) and not self._recording:
+            self._recording = True
+            self._session_start = datetime.now(timezone.utc)
+            self._current_test_id = test_manager.start_test()
+            log.info("Session started (test_id=%s)", self._current_test_id)
+
+        elif nid == Tags.End and bool(val) and self._recording:
+            self._recording = False
+            session_end = datetime.now(timezone.utc)
+            test_manager.end_test(self._current_test_id)
+            log.info("Session ended (test_id=%s), exporting...", self._current_test_id)
+            threading.Thread(
+                target=session_exporter.export_session,
+                args=(self._session_start, session_end, self._current_test_id),
+                daemon=True,
+            ).start()
+            self._session_start = None
+            self._current_test_id = None
 
     @staticmethod
     def _normalize_nid(nid: str) -> str:
