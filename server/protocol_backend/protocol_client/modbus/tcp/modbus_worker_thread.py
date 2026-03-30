@@ -177,24 +177,6 @@ class PLCWorkerThread(QThread):
         with self._latest_data_lock:
             return self._latest_data.copy()
 
-    def has_data_changed(self, reset: bool = True) -> bool:
-        """
-        Проверка изменения данных с момента последней проверки
-
-        ОПТИМИЗАЦИЯ: Позволяет GUI обновлять таблицы только при изменении данных.
-
-        Args:
-            reset: Сбросить флаг после проверки (по умолчанию True)
-
-        Returns:
-            bool: True если данные изменились
-        """
-        with self._latest_data_lock:
-            changed = self._latest_data_changed
-            if reset:
-                self._latest_data_changed = False
-            return changed
-
     # ==========================================================================
     # PRIVATE ASYNC METHODS (выполняются в event loop потока)
     # ==========================================================================
