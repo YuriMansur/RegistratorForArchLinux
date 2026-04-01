@@ -1,3 +1,4 @@
+from datetime import datetime
 import requests
 from config import get_base_url
 
@@ -47,8 +48,44 @@ def get_tags() -> list[dict]:
     return r.json()
 
 
-def get_history(limit: int = 1000) -> list[dict]:
+def get_history(limit: int = 10000) -> list[dict]:
     r = requests.get(_url("/history"), params={"limit": limit}, timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_checkouts() -> list[dict]:
+    r = requests.get(_url("/checkouts"), timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+def export_checkout(checkout_id: int) -> dict:
+    r = requests.post(_url(f"/checkouts/{checkout_id}/export"), timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_checkout_history(checkout_id: int) -> list[dict]:
+    r = requests.get(_url(f"/checkouts/{checkout_id}/history"), timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_exports() -> list[dict]:
+    r = requests.get(_url("/exports"), timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_history_range(from_dt: datetime, to_dt: datetime, tags: list[str] | None = None) -> list[dict]:
+    params: dict = {
+        "from_dt": from_dt.isoformat(),
+        "to_dt":   to_dt.isoformat(),
+    }
+    if tags:
+        params["tags"] = tags
+    r = requests.get(_url("/history/range"), params=params, timeout=30)
     r.raise_for_status()
     return r.json()
 

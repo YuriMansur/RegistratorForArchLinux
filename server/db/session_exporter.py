@@ -8,6 +8,13 @@ from pathlib import Path
 
 EXPORT_DIR = Path("/home/user/registrator/exports")
 
+# Теги, которые не попадают в экспорт (управляющие, служебные и т.д.)
+# Добавляй сюда имена тегов (Tag.name) которые не нужны в таблице.
+_EXCLUDE_TAG_NAMES: set[str] = {
+    "inProcess",
+    "End",
+}
+
 log = logging.getLogger(__name__)
 
 
@@ -22,21 +29,45 @@ def _fmt(dt: datetime) -> str:
 
 
 def export_session(session_start: datetime, session_end: datetime, test_id: int) -> None:
-    """Экспортировать строки TagHistory за период сессии в xlsx и docx."""
+    """Экспортировать данные испытания (автоматический вызов при End=True)."""
+    _export(test_id, session_start, session_end)
+
+
+def export_by_test_id(test_id: int) -> None:
+    """Экспортировать данные испытания по его ID (ручной вызов из GUI)."""
     from db.database import SessionLocal
-    from db.models import TagHistory
+    from db.models import Checkout
+
+    db = SessionLocal()
+    try:
+        checkout = db.get(Checkout, test_id)
+        if checkout is None:
+            log.warning("export_by_test_id: checkout %s not found", test_id)
+            return
+        started_at = checkout.started_at.replace(tzinfo=timezone.utc) \
+            if checkout.started_at.tzinfo is None else checkout.started_at
+        ended_at   = checkout.ended_at or datetime.now(timezone.utc)
+        if ended_at.tzinfo is None:
+            ended_at = ended_at.replace(tzinfo=timezone.utc)
+    finally:
+        db.close()
+
+    _export(test_id, started_at, ended_at)
+
+
+def _export(test_id: int, session_start: datetime, session_end: datetime) -> None:
+    """Общая логика: запросить TagHistory по test_id, записать xlsx и docx."""
+    from db.database import SessionLocal
+    from db.models import TagHistory, Tag
 
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
     db = SessionLocal()
     try:
-        from db.models import Tag
-        from sqlalchemy.orm import outerjoin
         rows = (
             db.query(TagHistory, Tag)
             .outerjoin(Tag, TagHistory.tag_id == Tag.id)
-            .filter(TagHistory.recorded_at >= session_start)
-            .filter(TagHistory.recorded_at <= session_end)
+            .filter(TagHistory.test_id == test_id)
             .order_by(TagHistory.recorded_at)
             .all()
         )
@@ -44,18 +75,39 @@ def export_session(session_start: datetime, session_end: datetime, test_id: int)
         db.close()
 
     if not rows:
-        log.warning("Session export: no rows found for test_id=%s", test_id)
+        log.warning("Export: no rows found for test_id=%s", test_id)
         return
 
-    dir_name = f"checkout_{test_id}_{_fmt(session_start)}_{_fmt(session_end)}"
-
-    session_dir = EXPORT_DIR / dir_name
+    session_dir = EXPORT_DIR / f"checkout_{test_id}_{_fmt(session_start)}_{_fmt(session_end)}"
     session_dir.mkdir(parents=True, exist_ok=True)
 
     ts = _fmt(session_end)
     _write_xlsx(session_dir / f"session_{ts}.xlsx", rows)
     _write_docx(session_dir / f"session_{ts}.docx", rows)
-    log.info("Session exported: %d rows → %s", len(rows), session_dir.name)
+    _write_png_per_tag(session_dir, rows)
+    log.info("Export done: %d rows → %s", len(rows), session_dir.name)
+
+
+def _pivot(rows: list):
+    """Сгруппировать строки по времени — каждый тег становится колонкой.
+    Возвращает:
+        headers — список заголовков колонок: "Имя [единицы]"
+        data    — dict {recorded_at: {header: value}}
+    """
+    from collections import defaultdict
+    # Сохраняем порядок тегов по первому появлению
+    headers = []
+    data = defaultdict(dict)
+    for h, tag in rows:
+        name  = tag.name  if tag else str(h.tag_id)
+        if name in _EXCLUDE_TAG_NAMES:
+            continue
+        units = tag.units if tag else ""
+        header = f"{name} [{units}]" if units else name
+        if header not in headers:
+            headers.append(header)
+        data[h.recorded_at][header] = h.value
+    return headers, data
 
 
 def _write_xlsx(path: Path, rows: list) -> None:
@@ -63,11 +115,19 @@ def _write_xlsx(path: Path, rows: list) -> None:
     wb = Workbook()
     ws = wb.active
     ws.title = "Сессия"
-    ws.append(["#", "Название", "Единицы", "Значение", "Время"])
-    for i, (h, tag) in enumerate(rows, 1):
-        name  = tag.name  if tag else ""
-        units = tag.units if tag else ""
-        ws.append([i, name, units, h.value, _to_local(h.recorded_at)])
+
+    headers, data = _pivot(rows)
+
+    # Заголовок: Время + имя тега [единицы]
+    ws.append(["Время"] + headers)
+
+    # Одна строка на каждый момент времени
+    for ts in sorted(data.keys()):
+        row = [_to_local(ts)]
+        for header in headers:
+            row.append(data[ts].get(header, ""))
+        ws.append(row)
+
     wb.save(path)
 
 
@@ -76,17 +136,65 @@ def _write_docx(path: Path, rows: list) -> None:
     doc = Document()
     doc.add_heading("Данные сессии OPC UA", 0)
     doc.add_paragraph(f"Записей: {len(rows)}")
-    table = doc.add_table(rows=1, cols=4)
+
+    headers, data = _pivot(rows)
+    timestamps = sorted(data.keys())
+
+    table = doc.add_table(rows=1, cols=1 + len(headers))
     table.style = "Table Grid"
+
+    # Заголовок: Время + имя тега [единицы]
     hdr = table.rows[0].cells
-    hdr[0].text = "Название"
-    hdr[1].text = "Единицы"
-    hdr[2].text = "Значение"
-    hdr[3].text = "Время"
-    for h, tag in rows:
+    hdr[0].text = "Время"
+    for i, header in enumerate(headers, 1):
+        hdr[i].text = header
+
+    # Одна строка на каждый момент времени
+    for ts in timestamps:
         cells = table.add_row().cells
-        cells[0].text = tag.name  if tag else ""
-        cells[1].text = tag.units if tag else ""
-        cells[2].text = h.value
-        cells[3].text = _to_local(h.recorded_at)
+        cells[0].text = _to_local(ts)
+        for i, header in enumerate(headers, 1):
+            cells[i].text = data[ts].get(header, "")
+
     doc.save(path)
+
+
+def _write_png_per_tag(session_dir: Path, rows: list) -> None:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+
+    headers, data = _pivot(rows)
+    if not headers or not data:
+        return
+
+    timestamps = sorted(data.keys())
+    local_times = []
+    for ts in timestamps:
+        dt = ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+        local_times.append(dt.astimezone())
+
+    for header in headers:
+        values = []
+        for ts in timestamps:
+            v = data[ts].get(header, None)
+            try:
+                values.append(float(v) if v is not None else None)
+            except (ValueError, TypeError):
+                values.append(None)
+
+        fig, ax = plt.subplots(figsize=(14, 6))
+        ax.plot(local_times, values, linewidth=1.2, color="steelblue")
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
+        fig.autofmt_xdate()
+        ax.set_xlabel("Время")
+        ax.set_ylabel(header)
+        ax.set_title(header)
+        ax.grid(True, linestyle="--", alpha=0.5)
+        fig.tight_layout()
+
+        # имя файла: безопасное имя тега (убираем спецсимволы)
+        safe_name = header.replace("/", "_").replace(" ", "_").replace("[", "").replace("]", "")
+        fig.savefig(session_dir / f"trend_{safe_name}.png", dpi=150)
+        plt.close(fig)

@@ -41,3 +41,11 @@ class TagHistoryOut(BaseModel):
     recorded_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class CheckoutOut(BaseModel):
+    id: int
+    started_at: datetime
+    ended_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
