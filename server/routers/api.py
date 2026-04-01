@@ -1,8 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+import threading
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Optional
 from sqlalchemy.orm import Session
 from db.database import get_db
-from db.models import Record, TagValue, TagHistory, Tag
-from db.schemas import RecordCreate, RecordUpdate, RecordOut, TagValueOut, TagHistoryOut
+from db.models import Record, TagValue, TagHistory, Tag, Checkout
+from db.schemas import RecordCreate, RecordUpdate, RecordOut, TagValueOut, TagHistoryOut, CheckoutOut
 from usb import usb_monitor, usb_exporter
 
 router = APIRouter()
@@ -68,6 +71,43 @@ def get_tag(tag_id: str, db: Session = Depends(get_db)):
     return row
 
 
+# ── Checkouts ─────────────────────────────────────────────────────────────────
+
+@router.get("/checkouts", response_model=list[CheckoutOut])
+def get_checkouts(db: Session = Depends(get_db)):
+    return db.query(Checkout).order_by(Checkout.started_at.desc()).all()
+
+
+@router.post("/checkouts/{checkout_id}/export", status_code=202)
+def export_checkout(checkout_id: int, db: Session = Depends(get_db)):
+    checkout = db.get(Checkout, checkout_id)
+    if not checkout:
+        raise HTTPException(status_code=404, detail="Checkout not found")
+    from db import session_exporter
+    threading.Thread(
+        target=session_exporter.export_by_test_id,
+        args=(checkout_id,),
+        daemon=True,
+    ).start()
+    return {"status": "export started", "checkout_id": checkout_id}
+
+
+@router.get("/checkouts/{checkout_id}/history", response_model=list[TagHistoryOut])
+def get_checkout_history(checkout_id: int, db: Session = Depends(get_db)):
+    rows = (
+        db.query(TagHistory, Tag)
+        .outerjoin(Tag, TagHistory.tag_id == Tag.id)
+        .filter(TagHistory.test_id == checkout_id)
+        .order_by(TagHistory.recorded_at)
+        .all()
+    )
+    result = []
+    for h, tag in rows:
+        h.tag_name = tag.name if tag else ""
+        result.append(h)
+    return result
+
+
 # ── History ───────────────────────────────────────────────────────────────────
 
 @router.get("/history", response_model=list[TagHistoryOut])
@@ -83,6 +123,47 @@ def get_history(limit: int = 1000, db: Session = Depends(get_db)):
     for h, tag in rows:
         h.tag_name = tag.name if tag else ""
         result.append(h)
+    return result
+
+
+@router.get("/history/range", response_model=list[TagHistoryOut])
+def get_history_range(
+    from_dt: datetime,
+    to_dt: datetime,
+    tags: Optional[list[str]] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    # SQLite хранит naive UTC — снимаем tzinfo перед сравнением
+    from_naive = from_dt.replace(tzinfo=None)
+    to_naive   = to_dt.replace(tzinfo=None)
+    q = (
+        db.query(TagHistory, Tag)
+        .outerjoin(Tag, TagHistory.tag_id == Tag.id)
+        .filter(TagHistory.recorded_at >= from_naive)
+        .filter(TagHistory.recorded_at <= to_naive)
+    )
+    if tags:
+        q = q.filter(Tag.name.in_(tags))
+    rows = q.order_by(TagHistory.recorded_at).all()
+    result = []
+    for h, tag in rows:
+        h.tag_name = tag.name if tag else ""
+        result.append(h)
+    return result
+
+
+# ── Exports ───────────────────────────────────────────────────────────────────
+
+@router.get("/exports")
+def list_exports() -> list[dict]:
+    from db.session_exporter import EXPORT_DIR
+    if not EXPORT_DIR.exists():
+        return []
+    result = []
+    for folder in sorted(EXPORT_DIR.iterdir()):
+        if folder.is_dir():
+            files = sorted(f.name for f in folder.iterdir() if f.is_file())
+            result.append({"folder": folder.name, "files": files})
     return result
 
 

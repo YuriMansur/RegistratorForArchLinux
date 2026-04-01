@@ -2,10 +2,10 @@ from datetime import datetime, timezone
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
-    QTableWidget, QTableWidgetItem, QPushButton, QLabel,
+    QTableWidget, QTableWidgetItem, QPushButton, QLabel, QMessageBox,
+    QTreeWidget, QTreeWidgetItem, QFileIconProvider, QComboBox,
 )
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, QTimer, QFileInfo, QObject
 import api_client
 
 
@@ -17,58 +17,218 @@ def _utc_to_local(utc_str: str) -> str:
         return utc_str
 
 
-_COLUMNS = ["#", "Тег", "Значение", "Время"]
+def _pivot_rows(rows: list[dict]) -> tuple[list[str], list[list[str]]]:
+    tags: list[str] = []
+    times: list[str] = []
+    data: dict[str, dict[str, str]] = {}
+
+    for r in rows:
+        tag = r.get("tag_name", "")
+        val = r.get("value", "")
+        t   = _utc_to_local(r.get("recorded_at", ""))
+        if tag and tag not in tags:
+            tags.append(tag)
+        if t not in data:
+            data[t] = {}
+            times.append(t)
+        data[t][tag] = val
+
+    return tags, [[t] + [data[t].get(tag, "") for tag in tags] for t in times]
 
 
-class HistoryWidget(QWidget):
+def _fill_pivoted(table: QTableWidget, rows: list[dict]) -> None:
+    tags, pivoted = _pivot_rows(rows)
+    cols = ["Время"] + tags
+
+    v_scroll = table.verticalScrollBar().value()
+    h_scroll = table.horizontalScrollBar().value()
+
+    cur_headers = [table.horizontalHeaderItem(c).text()
+                   for c in range(table.columnCount())
+                   if table.horizontalHeaderItem(c)]
+    if cur_headers != cols:
+        table.setColumnCount(len(cols))
+        table.setHorizontalHeaderLabels(cols)
+        table.setColumnWidth(0, 160)
+        for c in range(1, len(cols)):
+            table.setColumnWidth(c, 140)
+        table.horizontalHeader().setStretchLastSection(True)
+
+    table.setRowCount(len(pivoted))
+    for i, row in enumerate(pivoted):
+        for j, val in enumerate(row):
+            table.setItem(i, j, QTableWidgetItem(val))
+
+    table.verticalScrollBar().setValue(v_scroll)
+    table.horizontalScrollBar().setValue(h_scroll)
+
+
+def _make_table() -> QTableWidget:
+    t = QTableWidget()
+    t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+    t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+    t.verticalHeader().setVisible(False)
+    return t
+
+_ALL_DATA_ID = None   # userData для пункта "Все данные"
+
+
+class HistoryController(QObject):
+    """Контроллер: управляет данными и таймерами для вкладок архива."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._build_ui()
+        self._checkouts: list[dict] = []
+
+        self.data_widget    = self._build_data_widget()
+        self.exports_widget = self._build_exports_widget()
+
         self._refresh()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
         self._timer.start(5000)
 
-    def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+    # ── Построение виджетов ────────────────────────────────────────────────────
 
-        toolbar = QHBoxLayout()
-        self._count_label = QLabel("")
-        btn_refresh = QPushButton("Обновить")
-        btn_refresh.clicked.connect(self._refresh)
-        toolbar.addWidget(self._count_label)
-        toolbar.addStretch()
-        toolbar.addWidget(btn_refresh)
-        layout.addLayout(toolbar)
+    def _build_data_widget(self) -> QWidget:
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(4, 4, 4, 4)
 
-        self._table = QTableWidget()
-        self._table.setColumnCount(len(_COLUMNS))
-        self._table.setHorizontalHeaderLabels(_COLUMNS)
-        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._table.verticalHeader().setVisible(False)
-        self._table.horizontalHeader().setStretchLastSection(True)
-        self._table.setColumnWidth(0, 60)
-        self._table.setColumnWidth(1, 200)
-        self._table.setColumnWidth(2, 250)
-        layout.addWidget(self._table)
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("Испытание:"))
+
+        self._checkout_combo = QComboBox()
+        self._checkout_combo.setEditable(True)
+        self._checkout_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self._checkout_combo.setMinimumWidth(300)
+        completer = self._checkout_combo.completer()
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._checkout_combo.currentIndexChanged.connect(self._on_combo_changed)
+        search_row.addWidget(self._checkout_combo, stretch=1)
+
+        self._btn_export = QPushButton("Экспорт docx/xls/png")
+        self._btn_export.setEnabled(False)
+        self._btn_export.clicked.connect(self._export_selected)
+        search_row.addWidget(self._btn_export)
+        layout.addLayout(search_row)
+
+        self._data_label = QLabel("")
+        self._data_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._data_label)
+
+        self._data_table = _make_table()
+        layout.addWidget(self._data_table)
+        return w
+
+    def _build_exports_widget(self) -> QWidget:
+        self._exports_tree = QTreeWidget()
+        self._exports_tree.setHeaderLabel("Файлы экспорта на сервере")
+        self._exports_tree.setColumnCount(1)
+        return self._exports_tree
+
+    # ── Обновление ────────────────────────────────────────────────────────────
 
     def _refresh(self):
+        self._refresh_checkouts()
+        self._refresh_exports()
+
+    def _refresh_checkouts(self):
+        line_edit = self._checkout_combo.lineEdit()
+        if line_edit and line_edit.hasFocus():
+            return
+
         try:
-            rows = api_client.get_history(limit=1000)
+            self._checkouts = api_client.get_checkouts()
         except Exception:
             return
 
-        self._table.setRowCount(len(rows))
-        for i, row in enumerate(rows):
-            num = QTableWidgetItem(str(len(rows) - i))
-            num.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._table.setItem(i, 0, num)
-            self._table.setItem(i, 1, QTableWidgetItem(row.get("tag_name", "")))
-            self._table.setItem(i, 2, QTableWidgetItem(row.get("value", "")))
-            self._table.setItem(i, 3, QTableWidgetItem(
-                _utc_to_local(row.get("recorded_at", ""))
-            ))
+        prev_id = self._checkout_combo.currentData()
 
-        self._count_label.setText(f"Записей: {len(rows)}")
+        self._checkout_combo.blockSignals(True)
+        self._checkout_combo.clear()
+
+        # Первый пункт — все данные
+        self._checkout_combo.addItem("— Все данные —", userData=_ALL_DATA_ID)
+
+        restore_idx = 0
+        for i, c in enumerate(self._checkouts):
+            cid     = c.get("id")
+            started = _utc_to_local(c.get("started_at", ""))
+            self._checkout_combo.addItem(f"#{cid}  {started}", userData=cid)
+            if cid == prev_id:
+                restore_idx = i + 1   # +1 из-за пункта "Все данные"
+
+        self._checkout_combo.blockSignals(False)
+
+        self._checkout_combo.setCurrentIndex(restore_idx)
+        if prev_id != self._checkout_combo.currentData() \
+                or self._data_table.rowCount() == 0:
+            self._on_combo_changed(restore_idx)
+
+    def _on_combo_changed(self, index: int):
+        if index < 0:
+            return
+
+        checkout_id = self._checkout_combo.itemData(index)
+
+        # Экспорт только когда выбрано конкретное испытание
+        self._btn_export.setEnabled(checkout_id is not None)
+
+        try:
+            if checkout_id is None:
+                # Все данные
+                rows = api_client.get_history()
+                self._data_label.setText(f"Все данные — {len(rows)} записей")
+            else:
+                rows = api_client.get_checkout_history(checkout_id)
+                self._data_label.setText(f"Испытание #{checkout_id} — {len(rows)} записей")
+        except Exception:
+            return
+
+        _fill_pivoted(self._data_table, rows)
+
+    def _export_selected(self):
+        index = self._checkout_combo.currentIndex()
+        if index < 0:
+            return
+        checkout_id = self._checkout_combo.itemData(index)
+        if checkout_id is None:
+            return
+        try:
+            api_client.export_checkout(checkout_id)
+            QMessageBox.information(
+                None, "Экспорт",
+                f"Экспорт испытания #{checkout_id} запущен.\n"
+                f"Файлы сохранятся в папку exports на сервере.",
+            )
+        except Exception as e:
+            QMessageBox.warning(None, "Ошибка", f"Не удалось запустить экспорт:\n{e}")
+
+    def _refresh_exports(self):
+        try:
+            folders = api_client.get_exports()
+        except Exception:
+            return
+
+        expanded = set()
+        root = self._exports_tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            it = root.child(i)
+            if it.isExpanded():
+                expanded.add(it.text(0))
+
+        icon_provider = QFileIconProvider()
+        icon_folder = icon_provider.icon(QFileIconProvider.IconType.Folder)
+
+        self._exports_tree.clear()
+        for entry in folders:
+            folder_item = QTreeWidgetItem([entry["folder"]])
+            folder_item.setIcon(0, icon_folder)
+            for filename in entry["files"]:
+                child = QTreeWidgetItem([filename])
+                child.setIcon(0, icon_provider.icon(QFileInfo(filename)))
+                folder_item.addChild(child)
+            self._exports_tree.addTopLevelItem(folder_item)
+            folder_item.setExpanded(entry["folder"] in expanded)

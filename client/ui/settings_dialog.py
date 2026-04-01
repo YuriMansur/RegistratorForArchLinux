@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
 )
 from config import load_config, save_config
 
-_ADMIN_LOGIN = "root"
+_ADMIN_LOGIN    = "root"
 _ADMIN_PASSWORD = "111111"
 
 
@@ -14,17 +14,17 @@ class _AuthDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Авторизация")
         self.setMinimumWidth(280)
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-        self.login_edit = QLineEdit()
+        layout             = QVBoxLayout(self)
+        form               = QFormLayout()
+        self.login_edit    = QLineEdit()
         self.password_edit = QLineEdit()
         self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        form.addRow("Логин:", self.login_edit)
+        form.addRow("Логин:",  self.login_edit)
         form.addRow("Пароль:", self.password_edit)
         layout.addLayout(form)
         buttons = QDialogButtonBox()
-        btn_ok = buttons.addButton("Войти", QDialogButtonBox.ButtonRole.AcceptRole)
-        btn_cancel = buttons.addButton("Отмена", QDialogButtonBox.ButtonRole.RejectRole)
+        buttons.addButton("Войти",  QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.addButton("Отмена", QDialogButtonBox.ButtonRole.RejectRole)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -60,7 +60,7 @@ class SettingsDialog(QDialog):
         self.port_spin.setReadOnly(True)
         self.port_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
         form.addRow("IP-адрес:", self.host_edit)
-        form.addRow("Порт:", self.port_spin)
+        form.addRow("Порт:",     self.port_spin)
         layout.addLayout(form)
 
         btn_row = QHBoxLayout()
