@@ -7,6 +7,6 @@ class Dev_192_168_10_10_OPC_Tags:
     ForUra = "ns=2;s=Application.TimeOfWork.ForUra"
     ForUra2 = "ns=2;s=Application.TimeOfWork.rForUra2"
 
-# Использование:
+# Использование:                 
 #   from tags import Dev_192_168_10_10_OPC_Tags
 #   backend.read_node(server_id, Dev_192_168_10_10_OPC_Tags.Temperature)

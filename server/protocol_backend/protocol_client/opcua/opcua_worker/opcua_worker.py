@@ -146,6 +146,7 @@ class AsyncOpcUaWorker(SecurityMixin, LifecycleMixin, ExplorationMixin, ConfigMi
         self.namespace = namespace
         self.timeout = timeout
         self.on_data_changed = on_data_changed
+        self.on_poll_batch: Optional[Callable[[str, dict], None]] = None
 
         # --- Security ---
         # Логин/пароль для аутентификации на сервере. None = анонимный доступ.
@@ -454,10 +455,12 @@ class AsyncOpcUaWorker(SecurityMixin, LifecycleMixin, ExplorationMixin, ConfigMi
         if not self.is_connected:
             raise ConnectionError("Not connected to OPC UA server")
 
-        raw_results = await asyncio.gather(
-            *[self.read_node(node_id) for node_id in node_ids],
-            return_exceptions=True
-        )
+        nodes = [self._get_cached_node(nid) for nid in node_ids]
+        try:
+            raw_results = await self.client.read_values(nodes)
+        except Exception as e:
+            logger.error(f"Batch read error: {e}")
+            return {nid: None for nid in node_ids}
 
         results = {}
         for node_id, result in zip(node_ids, raw_results):
@@ -465,6 +468,7 @@ class AsyncOpcUaWorker(SecurityMixin, LifecycleMixin, ExplorationMixin, ConfigMi
                 results[node_id] = None
                 logger.error(f"Error reading {node_id}: {result}")
             else:
+                self.latest_data[node_id] = result
                 results[node_id] = result
         return results
 

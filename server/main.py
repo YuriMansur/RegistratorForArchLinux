@@ -28,6 +28,9 @@ from routers.api import router
 # Менеджер OPC UA соединений с ПЛК
 from protocol_backend.protocol_client.client_manager import ServerManager
 
+# OPC UA / Modbus сервер (поднимает наш собственный сервер с тестовыми тегами)
+from protocol_backend.protocol_server.server_manager import ServerManager as ProtocolServerManager
+
 # USB: мониторинг вставки/извлечения и экспорт данных
 from usb import usb_monitor, usb_exporter
 
@@ -49,6 +52,10 @@ async def lifespan(_app: FastAPI):
     global _server_manager
 
     # ── Startup ───────────────────────────────────────────────────────────────
+
+    # Запускаем наш OPC UA сервер с тестовыми тегами
+    _proto_server = ProtocolServerManager()
+    _proto_server.start()
 
     # Создаём ServerManager: конфигурирует OPC UA соединения и колбэки,
     # затем подключается ко всем серверам из конфига _SERVERS
@@ -74,6 +81,7 @@ async def lifespan(_app: FastAPI):
     # Отключаемся от всех OPC UA серверов, отменяем таймеры переподключения
     if _server_manager:
         _server_manager.stop()
+    _proto_server.stop()
 
 
 # Создаём FastAPI приложение с кастомным lifespan

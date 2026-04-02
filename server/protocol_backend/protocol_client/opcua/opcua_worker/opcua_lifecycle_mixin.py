@@ -162,17 +162,24 @@ class LifecycleMixin:
 
             while loop_info["active"]:
                 try:
+                    batch: dict = {}
                     if loop_info.get("sequential"):
                         # Читаем узлы строго по одному — порядок доставки гарантирован
                         for node_id in loop_info["nodes"]:
                             value = await self.read_node(node_id)
-                            if value is not None and self.on_data_changed:
-                                self.on_data_changed(node_id, value)
+                            if value is not None:
+                                if self.on_data_changed:
+                                    self.on_data_changed(node_id, value)
+                                batch[node_id] = value
                     else:
                         data = await self.read_multiple_nodes(loop_info["nodes"])
                         for node_id, value in data.items():
-                            if value is not None and self.on_data_changed:
-                                self.on_data_changed(node_id, value)
+                            if value is not None:
+                                if self.on_data_changed:
+                                    self.on_data_changed(node_id, value)
+                                batch[node_id] = value
+                    if batch and self.on_poll_batch:
+                        self.on_poll_batch(name, batch)
 
                 except ConnectionError:
                     logger.error(f"Poll '{name}': connection lost")

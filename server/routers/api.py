@@ -1,6 +1,9 @@
+import io
 import threading
+import zipfile
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from typing import Optional
 from sqlalchemy.orm import Session
 from db.database import get_db
@@ -165,6 +168,26 @@ def list_exports() -> list[dict]:
             files = sorted(f.name for f in folder.iterdir() if f.is_file())
             result.append({"folder": folder.name, "files": files})
     return result
+
+
+@router.get("/exports/{folder_name}/download")
+def download_export_folder(folder_name: str):
+    from db.session_exporter import EXPORT_DIR
+    folder = EXPORT_DIR / folder_name
+    if not folder.exists() or not folder.is_dir():
+        raise HTTPException(status_code=404, detail="Папка не найдена")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(folder.iterdir()):
+            if f.is_file():
+                zf.write(f, f.name)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={folder_name}.zip"},
+    )
 
 
 # ── USB ───────────────────────────────────────────────────────────────────────

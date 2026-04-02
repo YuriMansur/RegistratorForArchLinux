@@ -13,14 +13,16 @@ def write_tag(
     tag_name: str = "",
     record_history: bool = True,
     test_id: int | None = None,
+    recorded_at: datetime | None = None,
 ) -> None:
     """Записать текущее значение тега.
     - Всегда обновляет TagValue.
     - Если тег есть в справочнике Tag — обновляет Tag.value/updated_at.
     - record_history=True — пишет строку в TagHistory (с test_id если задан).
+    - recorded_at — явный timestamp для TagHistory (None = datetime.now()).
     """
     serialized = _serialize(value)
-    now = datetime.now(timezone.utc)
+    now = recorded_at if recorded_at is not None else datetime.now(timezone.utc)
     db = SessionLocal()
     try:
         # ── TagValue (неизменная логика) ──────────────────────────────────────

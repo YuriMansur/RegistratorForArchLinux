@@ -6,6 +6,11 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
 EXPORT_DIR = Path("/home/user/registrator/exports")
 
 # Теги, которые не попадают в экспорт (управляющие, служебные и т.д.)
@@ -160,37 +165,41 @@ def _write_docx(path: Path, rows: list) -> None:
 
 
 def _write_png_per_tag(session_dir: Path, rows: list) -> None:
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    import matplotlib.dates as mdates
-
     headers, data = _pivot(rows)
     if not headers or not data:
         return
 
+    local_tz = datetime.now(timezone.utc).astimezone().tzinfo
     timestamps = sorted(data.keys())
-    local_times = []
-    for ts in timestamps:
-        dt = ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
-        local_times.append(dt.astimezone())
 
     for header in headers:
+        # Берём только временны́е точки где есть значение этого тега
+        tag_times = []
         values = []
         for ts in timestamps:
             v = data[ts].get(header, None)
+            if v is None:
+                continue
             try:
-                values.append(float(v) if v is not None else None)
+                val = float(v)
             except (ValueError, TypeError):
-                values.append(None)
+                continue
+            dt = ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+            tag_times.append(dt.astimezone(local_tz))
+            values.append(val)
+
+        if not tag_times:
+            continue
 
         fig, ax = plt.subplots(figsize=(14, 6))
-        ax.plot(local_times, values, linewidth=1.2, color="steelblue")
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
+        ax.plot(tag_times, values, linewidth=1.2, color="steelblue")
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S", tz=local_tz))
         fig.autofmt_xdate()
         ax.set_xlabel("Время")
         ax.set_ylabel(header)
-        ax.set_title(header)
+        t_start = tag_times[0].strftime("%d.%m.%Y %H:%M:%S")
+        t_end   = tag_times[-1].strftime("%d.%m.%Y %H:%M:%S")
+        ax.set_title(f"{header}\n{t_start} — {t_end}", fontsize=11)
         ax.grid(True, linestyle="--", alpha=0.5)
         fig.tight_layout()
 

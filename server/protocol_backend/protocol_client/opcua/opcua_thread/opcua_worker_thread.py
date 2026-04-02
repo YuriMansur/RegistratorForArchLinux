@@ -97,6 +97,8 @@ class OpcUaWorkerThread(threading.Thread):
         """Сигнал: завершилось чтение нескольких узлов. Аргумент — dict node_id → value."""
         self.on_batch_write_completed:       Optional[Callable[[dict], None]]    = None
         """Сигнал: завершилась запись нескольких узлов. Аргумент — dict node_id → success."""
+        self.on_poll_batch:                  Optional[Callable[[str, dict], None]]= None
+        """Сигнал: завершился один цикл poll. Аргументы — имя группы и dict node_id → value."""
         self.on_watchdog_disconnect:         Optional[Callable]                  = None
         """Сигнал: watchdog обнаружил пропажу связи с сервером."""
         self.on_browse_completed:            Optional[Callable[[list], None]]    = None
@@ -130,6 +132,7 @@ class OpcUaWorkerThread(threading.Thread):
             timeout         = self.timeout,
             on_data_changed = self._on_data_changed,
         )
+        self.worker.on_poll_batch = lambda name, batch: _call(self.on_poll_batch, name, batch)
         # Запускаем корутину подключения к серверу — она будет выполняться в этом же event loop.
         self._loop_ready = True
         # Вызываем сигнал о готовности event loop, чтобы внешний код мог начать ставить задачи в очередь.

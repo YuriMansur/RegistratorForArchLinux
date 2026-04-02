@@ -78,6 +78,12 @@ def get_exports() -> list[dict]:
     return r.json()
 
 
+def download_export_folder(folder_name: str) -> bytes:
+    r = requests.get(_url(f"/exports/{folder_name}/download"), timeout=60)
+    r.raise_for_status()
+    return r.content
+
+
 def get_history_range(from_dt: datetime, to_dt: datetime, tags: list[str] | None = None) -> list[dict]:
     params: dict = {
         "from_dt": from_dt.isoformat(),

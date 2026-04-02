@@ -39,7 +39,7 @@ _SERVERS = [
         "polls"             : [
             # arrays — группа опроса всех данных испытания (ForUra).
             # sequential=True: читать узлы последовательно, чтобы не перегружать ПЛК.
-            {"name": "arrays", "nodes": [Tags.ForUra, Tags.ForUra2], "interval": 1.0, "sequential": True},
+            {"name": "arrays", "nodes": [Tags.ForUra, Tags.ForUra2], "interval": 1.0, "sequential": False},
         ],
     },
 ]
@@ -141,8 +141,10 @@ class ServerManager:
         b.on_connected        = self._on_connected
         # При отключении — запустить таймер переподключения (если auto_reconnect).
         b.on_disconnected     = self._on_disconnected
-        # При получении данных от любого тега — записать в SQLite.
+        # При получении данных от подписки (control теги) — записать в SQLite.
         b.on_data_updated     = self._on_data_received
+        # При завершении poll-цикла — записать все теги батча с одним timestamp.
+        b.on_poll_batch       = self._on_poll_batch
         # При ошибке соединения — просто логируем, без дополнительной логики.
         b.on_connection_error = lambda srv, err: log.error("OPC error [%s]: %s", srv, err)
 
@@ -220,34 +222,43 @@ class ServerManager:
     # ── Маршрутизация входящих данных ─────────────────────────────────────────
 
     def _on_data_received(self, srv: str, nid: str, val):
-        """Единая точка входа для всех данных от ПЛК — пишем в SQLite.
-        Вызывается backend'ом при каждом изменении тега (подписка или poll).
+        """Обработчик данных от подписки (control теги: inProcess, End).
+        Poll-теги обрабатываются в _on_poll_batch с единым timestamp.
         Args:
             srv (str): Имя сервера-источника.
-            nid (str): NodeId тега (может прийти как объект asyncua, нормализуем).
+            nid (str): NodeId тега.
             val: Новое значение тега."""
-        # Нормализуем NodeId — asyncua иногда присылает объект вместо строки "ns=X;s=...".
         nid = self._normalize_nid(nid)
-        # Получаем человекочитаемое имя тега из маппинга.
-        # Если тег неизвестен — используем node_id как имя.
         tag_name = _NODE_NAMES.get(nid, nid)
 
-        # Управляющие теги (inProcess, End) — особая обработка:
-        # они меняют состояние сессии, но сами в историю не пишутся.
+        # Управляющие теги — особая обработка: не пишем в историю.
         if nid in _CONTROL_TAGS:
-            # Пишем только текущее значение (record_history=False).
             tag_writer.write_tag(tag_id=nid, value=val, tag_name=tag_name, record_history=False)
-            # Обрабатываем смену состояния сессии испытания.
             self._handle_control(nid, val)
             return
 
-        # Обычные теги — пишем текущее значение всегда,
-        # историю — только если идёт сессия испытания (_recording=True).
-        tag_writer.write_tag(
-            tag_id=nid, value=val, tag_name=tag_name,
-            record_history=self._recording,   # True только во время испытания
-            test_id=self._current_test_id,    # Привязка к текущему испытанию
-        )
+        # Не-control теги от on_data_updated (не из poll) — пишем текущее значение без истории.
+        # История пишется в _on_poll_batch с единым timestamp.
+        tag_writer.write_tag(tag_id=nid, value=val, tag_name=tag_name, record_history=False)
+
+    def _on_poll_batch(self, srv: str, poll_name: str, batch: dict):
+        """Обработчик завершения poll-цикла — все теги группы с единым timestamp.
+        Args:
+            srv (str): Имя сервера.
+            poll_name (str): Имя группы опроса.
+            batch (dict): {node_id: value} — все теги, прочитанные за один цикл."""
+        now = datetime.now(timezone.utc)
+        for nid, val in batch.items():
+            nid = self._normalize_nid(nid)
+            tag_name = _NODE_NAMES.get(nid, nid)
+            if nid in _CONTROL_TAGS:
+                continue
+            tag_writer.write_tag(
+                tag_id=nid, value=val, tag_name=tag_name,
+                record_history=self._recording,
+                test_id=self._current_test_id,
+                recorded_at=now,
+            )
 
     def _handle_control(self, nid: str, val):
         """Обработать управляющий тег — запустить или завершить сессию испытания.
