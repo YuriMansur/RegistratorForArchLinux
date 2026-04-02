@@ -47,6 +47,9 @@ class OpcUaBackend:
         # Callback: сервер подтвердил подписку на тег.
         # Аргументы — server_id (str), node_id (str).
         self.on_tag_subscribed      : Optional[Callable[[str, str], None]]      = None
+        # Callback: завершился один цикл poll. Все теги группы с одним timestamp.
+        # Аргументы — server_id (str), poll_name (str), batch dict {node_id: value}.
+        self.on_poll_batch          : Optional[Callable[[str, str, dict], None]] = None
         # Callback: watchdog обнаружил пропажу связи с сервером.
         # Аргумент — server_id (str).
         self.on_watchdog_disconnect : Optional[Callable[[str], None]]           = None
@@ -560,6 +563,7 @@ class OpcUaBackend:
         # nid — node_id тега.
         thread.on_tag_subscribed      = lambda nid: self._on_tag_subscribed(server_id, nid)
         # Подключаем on_watchdog_disconnect — когда watchdog обнаружил потерю связи.
+        thread.on_poll_batch          = lambda name, batch: self._on_poll_batch(server_id, name, batch)
         thread.on_watchdog_disconnect = lambda: self._on_watchdog_disconnect(server_id)
 
 
@@ -610,6 +614,12 @@ class OpcUaBackend:
         # Если внешний callback назначен — передаём все три параметра.
         if self.on_data_updated:
             self.on_data_updated(server_id, node_id, value)
+
+
+    # Обработчик завершения poll-цикла (батч всех тегов группы)
+    def _on_poll_batch(self, server_id: str, name: str, batch: dict):
+        if self.on_poll_batch:
+            self.on_poll_batch(server_id, name, batch)
 
 
     # Обработчик успешной подписки на тег

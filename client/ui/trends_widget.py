@@ -171,6 +171,17 @@ class _TimeAxisItem(pg.AxisItem):
         return result
 
 
+class _CheckoutCombo(QComboBox):
+    """QComboBox, который обновляет список испытаний перед открытием попапа."""
+    def __init__(self, refresh_fn, parent=None):
+        super().__init__(parent)
+        self._refresh_fn = refresh_fn
+
+    def showPopup(self):
+        self._refresh_fn()
+        super().showPopup()
+
+
 class TrendsWidget(QWidget):
     _PRESET_ON  = (
         "QPushButton { background-color: #1a8fe3; color: white; "
@@ -184,6 +195,8 @@ class TrendsWidget(QWidget):
         self._setup_ui()
         self._load_tags()
         self._load_checkouts()
+        self._on_checkout_changed(0)
+
 
     # ── UI ────────────────────────────────────────────────────────────────────
 
@@ -202,7 +215,7 @@ class TrendsWidget(QWidget):
 
         # Испытание
         arch_layout.addWidget(QLabel("Испытание:"))
-        self._checkout_combo = QComboBox()
+        self._checkout_combo = _CheckoutCombo(self._load_checkouts)
         self._checkout_combo.setEditable(True)
         self._checkout_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self._checkout_combo.setMinimumWidth(220)
@@ -396,10 +409,10 @@ class TrendsWidget(QWidget):
             tags = api_client.get_tags()
         except Exception:
             return
-        color_idx = 0
+        color_idx = len(self._channels)
         for t in tags:
             name = t.get("tag_name", "")
-            if not name or name in self._SKIP_TAGS:
+            if not name or name in self._SKIP_TAGS or name in self._channels:
                 continue
             self._add_channel(name, _COLORS[color_idx % len(_COLORS)])
             color_idx += 1
@@ -599,6 +612,7 @@ class TrendsWidget(QWidget):
             b.setStyleSheet(self._PRESET_ON if b is active_btn else self._PRESET_OFF)
 
     def _load_archive(self):
+        self._load_tags()
         local_tz = _dt.datetime.now(_dt.timezone.utc).astimezone().tzinfo
         from_dt = (self._dt_from.dateTime().toPyDateTime()
                    .replace(tzinfo=local_tz).astimezone(timezone.utc))

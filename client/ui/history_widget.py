@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
 
+from pathlib import Path
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QLabel, QMessageBox,
-    QTreeWidget, QTreeWidgetItem, QFileIconProvider, QComboBox,
+    QTreeWidget, QTreeWidgetItem, QFileIconProvider, QComboBox, QFileDialog,
 )
 from PyQt6.QtCore import Qt, QTimer, QFileInfo, QObject
 import api_client
@@ -123,10 +125,47 @@ class HistoryController(QObject):
         return w
 
     def _build_exports_widget(self) -> QWidget:
+        w = QWidget()
+        vl = QVBoxLayout(w)
+        vl.setContentsMargins(4, 4, 4, 4)
+        vl.setSpacing(4)
+
+        hl = QHBoxLayout()
+        btn_download = QPushButton("Скачать папку")
+        btn_download.clicked.connect(self._download_selected_folder)
+        hl.addWidget(btn_download)
+        hl.addStretch()
+        vl.addLayout(hl)
+
         self._exports_tree = QTreeWidget()
         self._exports_tree.setHeaderLabel("Файлы экспорта на сервере")
         self._exports_tree.setColumnCount(1)
-        return self._exports_tree
+        vl.addWidget(self._exports_tree)
+
+        self._btn_download_export = btn_download
+        return w
+
+    def _download_selected_folder(self):
+        item = self._exports_tree.currentItem()
+        if item is None:
+            return
+        # Если выбран дочерний элемент — берём родителя
+        if item.parent() is not None:
+            item = item.parent()
+        folder_name = item.text(0)
+
+        save_path, _ = QFileDialog.getSaveFileName(
+            None, "Сохранить архив", f"{folder_name}.zip", "ZIP архив (*.zip)"
+        )
+        if not save_path:
+            return
+
+        try:
+            data = api_client.download_export_folder(folder_name)
+            Path(save_path).write_bytes(data)
+            QMessageBox.information(None, "Скачано", f"Сохранено: {save_path}")
+        except Exception as e:
+            QMessageBox.warning(None, "Ошибка", f"Не удалось скачать:\n{e}")
 
     # ── Обновление ────────────────────────────────────────────────────────────
 
