@@ -1,14 +1,16 @@
 from datetime import datetime, timezone
+import datetime as _dt
 
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout,
+    QWidget, QVBoxLayout, QHBoxLayout, QFrame,
     QTableWidget, QTableWidgetItem, QPushButton, QLabel, QMessageBox,
     QTreeWidget, QTreeWidgetItem, QFileIconProvider, QComboBox, QFileDialog,
 )
-from PyQt6.QtCore import Qt, QTimer, QFileInfo, QObject
+from PyQt6.QtCore import Qt, QTimer, QDateTime, QFileInfo, QObject
 import api_client
+from ui.datetime_picker import DateTimePicker
 
 
 def _utc_to_local(utc_str: str) -> str:
@@ -17,6 +19,16 @@ def _utc_to_local(utc_str: str) -> str:
         return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         return utc_str
+
+
+def _iso_to_local_qdt(utc_str: str) -> QDateTime:
+    try:
+        dt = datetime.fromisoformat(utc_str).replace(tzinfo=timezone.utc)
+        local = dt.astimezone()
+        return QDateTime(local.year, local.month, local.day,
+                         local.hour, local.minute, local.second)
+    except Exception:
+        return QDateTime.currentDateTime()
 
 
 def _pivot_rows(rows: list[dict]) -> tuple[list[str], list[list[str]]]:
@@ -72,8 +84,6 @@ def _make_table() -> QTableWidget:
     t.verticalHeader().setVisible(False)
     return t
 
-_ALL_DATA_ID = None   # userData для пункта "Все данные"
-
 
 class HistoryController(QObject):
     """Контроллер: управляет данными и таймерами для вкладок архива."""
@@ -85,9 +95,10 @@ class HistoryController(QObject):
         self.data_widget    = self._build_data_widget()
         self.exports_widget = self._build_exports_widget()
 
-        self._refresh()
+        self._refresh_checkouts()
+        self._refresh_exports()
         self._timer = QTimer(self)
-        self._timer.timeout.connect(self._refresh)
+        self._timer.timeout.connect(self._refresh_exports)
         self._timer.start(5000)
 
     # ── Построение виджетов ────────────────────────────────────────────────────
@@ -96,25 +107,69 @@ class HistoryController(QObject):
         w = QWidget()
         layout = QVBoxLayout(w)
         layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
 
-        search_row = QHBoxLayout()
-        search_row.addWidget(QLabel("Испытание:"))
+        # Строка 1: испытание + диапазон дат + загрузить (стилизованная панель как в трендах)
+        _CTRL_STYLE = """
+            QFrame { background-color: #2b2b2b; border-bottom: 1px solid #444444; }
+            QLabel { color: #cccccc; background: transparent; }
+            QPushButton {
+                color: #cccccc; background-color: #3a3a3a;
+                border: 1px solid #555555; border-radius: 3px; padding: 1px 6px;
+            }
+            QPushButton:hover { background-color: #484848; }
+            QComboBox {
+                color: #cccccc; background-color: #3a3a3a;
+                border: 1px solid #555555; border-radius: 3px; padding: 1px 4px;
+            }
+            QLineEdit {
+                color: #cccccc; background-color: #3a3a3a;
+                border: 1px solid #555555; border-radius: 3px;
+                padding: 1px 4px; min-height: 20px;
+            }
+        """
+        ctrl_frame = QFrame()
+        ctrl_frame.setStyleSheet(_CTRL_STYLE)
+        row1 = QHBoxLayout(ctrl_frame)
+        row1.setContentsMargins(8, 4, 8, 4)
+        row1.setSpacing(8)
+
+        row1.addWidget(QLabel("Испытание:"))
 
         self._checkout_combo = QComboBox()
         self._checkout_combo.setEditable(True)
         self._checkout_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self._checkout_combo.setMinimumWidth(300)
+        self._checkout_combo.setMinimumWidth(220)
         completer = self._checkout_combo.completer()
         completer.setFilterMode(Qt.MatchFlag.MatchContains)
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._checkout_combo.currentIndexChanged.connect(self._on_combo_changed)
-        search_row.addWidget(self._checkout_combo, stretch=1)
+        row1.addWidget(self._checkout_combo, stretch=1)
 
+        row1.addWidget(QLabel("С:"))
+        self._dt_from = DateTimePicker()
+        self._dt_from.setDateTime(QDateTime.currentDateTime().addSecs(-3600))
+        row1.addWidget(self._dt_from)
+
+        row1.addWidget(QLabel("По:"))
+        self._dt_to = DateTimePicker()
+        self._dt_to.setDateTime(QDateTime.currentDateTime())
+        row1.addWidget(self._dt_to)
+
+        self._btn_load = QPushButton("Загрузить")
+        self._btn_load.clicked.connect(self._load_data)
+        row1.addWidget(self._btn_load)
+
+        layout.addWidget(ctrl_frame)
+
+        # Строка 2: экспорт
+        row2 = QHBoxLayout()
         self._btn_export = QPushButton("Экспорт docx/xls/png")
-        self._btn_export.setEnabled(False)
+        self._btn_export.setEnabled(True)
         self._btn_export.clicked.connect(self._export_selected)
-        search_row.addWidget(self._btn_export)
-        layout.addLayout(search_row)
+        row2.addWidget(self._btn_export)
+        row2.addStretch()
+        layout.addLayout(row2)
 
         self._data_label = QLabel("")
         self._data_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -149,7 +204,6 @@ class HistoryController(QObject):
         item = self._exports_tree.currentItem()
         if item is None:
             return
-        # Если выбран дочерний элемент — берём родителя
         if item.parent() is not None:
             item = item.parent()
         folder_name = item.text(0)
@@ -169,10 +223,6 @@ class HistoryController(QObject):
 
     # ── Обновление ────────────────────────────────────────────────────────────
 
-    def _refresh(self):
-        self._refresh_checkouts()
-        self._refresh_exports()
-
     def _refresh_checkouts(self):
         line_edit = self._checkout_combo.lineEdit()
         if line_edit and line_edit.hasFocus():
@@ -187,61 +237,81 @@ class HistoryController(QObject):
 
         self._checkout_combo.blockSignals(True)
         self._checkout_combo.clear()
-
-        # Первый пункт — все данные
-        self._checkout_combo.addItem("— Все данные —", userData=_ALL_DATA_ID)
+        self._checkout_combo.addItem("— Произвольный диапазон —", userData=None)
 
         restore_idx = 0
         for i, c in enumerate(self._checkouts):
             cid     = c.get("id")
             started = _utc_to_local(c.get("started_at", ""))
-            self._checkout_combo.addItem(f"#{cid}  {started}", userData=cid)
-            if cid == prev_id:
-                restore_idx = i + 1   # +1 из-за пункта "Все данные"
+            ended   = c.get("ended_at")
+            label   = f"#{cid}  {started}" + ("  (активно)" if not ended else "")
+            self._checkout_combo.addItem(label, userData=c)
+            if isinstance(prev_id, dict) and prev_id.get("id") == cid:
+                restore_idx = i + 1
 
         self._checkout_combo.blockSignals(False)
-
         self._checkout_combo.setCurrentIndex(restore_idx)
-        if prev_id != self._checkout_combo.currentData() \
-                or self._data_table.rowCount() == 0:
-            self._on_combo_changed(restore_idx)
+        self._on_combo_changed(restore_idx)
 
     def _on_combo_changed(self, index: int):
         if index < 0:
             return
+        checkout = self._checkout_combo.currentData()
+        if checkout is None:
+            # Произвольный диапазон — разблокировать пикеры
+            self._dt_from.setEnabled(True)
+            self._dt_to.setEnabled(True)
+        else:
+            # Заполнить диапазон из испытания
+            started = checkout.get("started_at", "")
+            ended   = checkout.get("ended_at")
+            if started:
+                self._dt_from.setDateTime(_iso_to_local_qdt(started))
+            self._dt_to.setDateTime(
+                _iso_to_local_qdt(ended) if ended else QDateTime.currentDateTime()
+            )
+            self._dt_from.setEnabled(False)
+            self._dt_to.setEnabled(False)
+            self._btn_export.setEnabled(True)
 
-        checkout_id = self._checkout_combo.itemData(index)
-
-        # Экспорт только когда выбрано конкретное испытание
-        self._btn_export.setEnabled(checkout_id is not None)
-
+    def _load_data(self):
+        """Загрузить данные по кнопке — по диапазону дат."""
+        local_tz = _dt.datetime.now(_dt.timezone.utc).astimezone().tzinfo
+        from_dt = (self._dt_from.dateTime().toPyDateTime()
+                   .replace(tzinfo=local_tz).astimezone(_dt.timezone.utc))
+        to_dt   = (self._dt_to.dateTime().toPyDateTime()
+                   .replace(tzinfo=local_tz).astimezone(_dt.timezone.utc))
         try:
-            if checkout_id is None:
-                # Все данные
-                rows = api_client.get_history()
-                self._data_label.setText(f"Все данные — {len(rows)} записей")
-            else:
-                rows = api_client.get_checkout_history(checkout_id)
-                self._data_label.setText(f"Испытание #{checkout_id} — {len(rows)} записей")
-        except Exception:
+            rows = api_client.get_history_range(from_dt, to_dt)
+            self._data_label.setText(f"{len(rows)} записей за период")
+        except Exception as e:
+            self._data_label.setText(f"Ошибка: {e}")
             return
-
         _fill_pivoted(self._data_table, rows)
 
     def _export_selected(self):
-        index = self._checkout_combo.currentIndex()
-        if index < 0:
-            return
-        checkout_id = self._checkout_combo.itemData(index)
-        if checkout_id is None:
-            return
+        checkout = self._checkout_combo.currentData()
         try:
-            api_client.export_checkout(checkout_id)
-            QMessageBox.information(
-                None, "Экспорт",
-                f"Экспорт испытания #{checkout_id} запущен.\n"
-                f"Файлы сохранятся в папку exports на сервере.",
-            )
+            if isinstance(checkout, dict):
+                checkout_id = checkout.get("id")
+                api_client.export_checkout(checkout_id)
+                QMessageBox.information(
+                    None, "Экспорт",
+                    f"Экспорт испытания #{checkout_id} запущен.\n"
+                    f"Файлы сохранятся в папку exports на сервере.",
+                )
+            else:
+                local_tz = _dt.datetime.now(_dt.timezone.utc).astimezone().tzinfo
+                from_dt = (self._dt_from.dateTime().toPyDateTime()
+                           .replace(tzinfo=local_tz).astimezone(_dt.timezone.utc))
+                to_dt   = (self._dt_to.dateTime().toPyDateTime()
+                           .replace(tzinfo=local_tz).astimezone(_dt.timezone.utc))
+                api_client.export_date_range(from_dt, to_dt)
+                QMessageBox.information(
+                    None, "Экспорт",
+                    f"Экспорт диапазона запущен.\n"
+                    f"Файлы сохранятся в папку exports на сервере.",
+                )
         except Exception as e:
             QMessageBox.warning(None, "Ошибка", f"Не удалось запустить экспорт:\n{e}")
 

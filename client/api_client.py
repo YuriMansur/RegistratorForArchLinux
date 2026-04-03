@@ -96,6 +96,16 @@ def get_history_range(from_dt: datetime, to_dt: datetime, tags: list[str] | None
     return r.json()
 
 
+def export_date_range(from_dt: datetime, to_dt: datetime) -> dict:
+    params = {
+        "from_dt": from_dt.isoformat(),
+        "to_dt":   to_dt.isoformat(),
+    }
+    r = requests.post(_url("/history/export-range"), params=params, timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
 def get_usb_devices() -> list[dict]:
     r = requests.get(_url("/usb/devices"), timeout=TIMEOUT)
     r.raise_for_status()

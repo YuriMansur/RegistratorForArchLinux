@@ -155,6 +155,17 @@ def get_history_range(
     return result
 
 
+@router.post("/history/export-range", status_code=202)
+def export_history_range(from_dt: datetime, to_dt: datetime):
+    from db import session_exporter
+    threading.Thread(
+        target=session_exporter.export_by_date_range,
+        args=(from_dt, to_dt),
+        daemon=True,
+    ).start()
+    return {"status": "export started"}
+
+
 # ── Exports ───────────────────────────────────────────────────────────────────
 
 @router.get("/exports")

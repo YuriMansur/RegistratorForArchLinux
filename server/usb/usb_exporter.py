@@ -77,10 +77,18 @@ def _unmount_if_busy():
             break
         if not mounted:
             break
-        subprocess.run(
+        # Сначала пробуем обычный umount, при ошибке — lazy (-l),
+        # который отсоединяет точку монтирования даже если устройство уже физически извлечено.
+        result = subprocess.run(
             ["sudo", "umount", _MOUNT_POINT],
             capture_output=True, timeout=5,
         )
+        if result.returncode != 0:
+            subprocess.run(
+                ["sudo", "umount", "-l", _MOUNT_POINT],
+                capture_output=True, timeout=5,
+            )
+        time.sleep(0.3)
 
 
 def _mount_partition(partition: str) -> str | None:
@@ -202,14 +210,18 @@ def _dir_matches_usb(src_dir: Path, usb_dir: Path) -> bool:
     return True
 
 
+_LAST_N = 5  # сколько последних испытаний копировать на флешку
+
+
 def _get_missing_dirs(usb_dir: Path) -> list[Path]:
-    """Папки checkout_* из EXPORT_DIR, которых нет на USB или файлы не совпадают по размеру."""
+    """Последние _LAST_N папок checkout_* из EXPORT_DIR, которых нет на USB или файлы не совпадают."""
     if not EXPORT_DIR.exists():
         log.warning("EXPORT_DIR not found: %s", EXPORT_DIR)
         return []
 
-    export_dirs = sorted(d for d in EXPORT_DIR.iterdir() if d.is_dir() and d.name.startswith("checkout_"))
-    log.info("EXPORT_DIR has %d checkout dir(s)", len(export_dirs))
+    all_dirs = sorted(d for d in EXPORT_DIR.iterdir() if d.is_dir() and d.name.startswith("checkout_"))
+    export_dirs = all_dirs[-_LAST_N:]
+    log.info("EXPORT_DIR has %d checkout dir(s), using last %d", len(all_dirs), len(export_dirs))
 
     missing = [d for d in export_dirs if not _dir_matches_usb(d, usb_dir)]
     log.info("Dirs to copy (missing or changed): %d", len(missing))

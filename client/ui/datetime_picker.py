@@ -69,7 +69,7 @@ class _ClockFace(QWidget):
         if self._mode == "hour":
             h = val if val is not None else self._hour
             is_inner = (h == 0 or h > 12)
-            r = R * 0.60 if is_inner else R * 0.80
+            r = R * 0.55 if is_inner else R * 0.80
             return self._pos(h % 12 or 12, 12, r)
         else:
             m = val if val is not None else self._minute
@@ -126,26 +126,27 @@ class _ClockFace(QWidget):
         p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(cx - 5, cy - 5, 10, 10)
 
-    def _draw_hand(self, p, cx, cy, x, y):
+    def _draw_hand(self, p, cx, cy, x, y, r=13):
         p.setPen(QPen(QColor("#4fc3f7"), 2))
         p.drawLine(cx, cy, int(x), int(y))
         p.setBrush(QBrush(QColor("#4fc3f7")))
         p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(int(x) - 13, int(y) - 13, 26, 26)
+        p.drawEllipse(int(x) - r, int(y) - r, r * 2, r * 2)
 
     def _draw_num(self, p, x, y, text: str, selected: bool, hovered: bool, r: int = 13):
-        if selected or hovered:
-            p.setBrush(QBrush(QColor("#4fc3f7") if selected else QColor("#37474f")))
+        if selected:
+            p.setBrush(QBrush(QColor("#4fc3f7")))
             p.setPen(Qt.PenStyle.NoPen)
             p.drawEllipse(int(x) - r, int(y) - r, r * 2, r * 2)
-        p.setPen(QColor("white" if selected else ("#4fc3f7" if hovered else "#cccccc")))
+        p.setPen(QColor("white" if selected else "#cccccc"))
         fs = 10 if r >= 12 else 8
         p.setFont(QFont("Arial", fs, QFont.Weight.Bold if selected else QFont.Weight.Normal))
         p.drawText(QRect(int(x)-r, int(y)-r, r*2, r*2), Qt.AlignmentFlag.AlignCenter, text)
 
     def _draw_hours(self, p, cx, cy, R):
         hx, hy = self._hand_tip(cx, cy, R)
-        self._draw_hand(p, cx, cy, hx, hy)
+        is_inner = self._hour == 0 or self._hour > 12
+        self._draw_hand(p, cx, cy, hx, hy, r=10 if is_inner else 13)
 
         is_inner = self._hour == 0 or self._hour > 12
         for h in range(1, 13):
