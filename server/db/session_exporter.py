@@ -60,6 +60,49 @@ def export_by_test_id(test_id: int) -> None:
     _export(test_id, started_at, ended_at)
 
 
+def export_by_date_range(from_dt: datetime, to_dt: datetime) -> None:
+    """Экспортировать данные по произвольному диапазону дат (ручной вызов из GUI)."""
+    from db.database import SessionLocal
+    from db.models import TagHistory, Tag
+
+    if from_dt.tzinfo is None:
+        from_dt = from_dt.replace(tzinfo=timezone.utc)
+    if to_dt.tzinfo is None:
+        to_dt = to_dt.replace(tzinfo=timezone.utc)
+
+    from_naive = from_dt.replace(tzinfo=None)
+    to_naive   = to_dt.replace(tzinfo=None)
+
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(TagHistory, Tag)
+            .outerjoin(Tag, TagHistory.tag_id == Tag.id)
+            .filter(TagHistory.recorded_at >= from_naive)
+            .filter(TagHistory.recorded_at <= to_naive)
+            .order_by(TagHistory.recorded_at)
+            .all()
+        )
+    finally:
+        db.close()
+
+    if not rows:
+        log.warning("Export range: no rows found for %s — %s", from_dt, to_dt)
+        return
+
+    folder_name = f"Data_{_fmt(from_dt)}_{_fmt(to_dt)}"
+    session_dir = EXPORT_DIR / folder_name
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = _fmt(to_dt)
+    _write_xlsx(session_dir / f"data_{ts}.xlsx", rows)
+    _write_docx(session_dir / f"data_{ts}.docx", rows)
+    _write_png_per_tag(session_dir, rows)
+    log.info("Export range done: %d rows → %s", len(rows), session_dir.name)
+
+
 def _export(test_id: int, session_start: datetime, session_end: datetime) -> None:
     """Общая логика: запросить TagHistory по test_id, записать xlsx и docx."""
     from db.database import SessionLocal

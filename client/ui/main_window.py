@@ -107,7 +107,12 @@ class MainWindow(QMainWindow):
         # Добавление метки статуса USB накопителя в строку статусов
         status_bar.addWidget(self._usb_status_label)
 
-    # Кнопка настроек подключения   
+        status_bar.addSpacing(24)
+        self._exp_label = QLabel("● Ожидание")
+        self._exp_label.setStyleSheet("color: #888888; font-weight: bold;")
+        status_bar.addWidget(self._exp_label)
+
+    # Кнопка настроек подключения
         # Добавление растяжки, чтобы кнопка настроек была прижата к правому краю
         status_bar.addStretch()
         # Кнопка для открытия настроек подключения
@@ -123,7 +128,7 @@ class MainWindow(QMainWindow):
         # Создание виджета вкладок и добавление вкладок для тегов, данных БД, экспорта и трендов
         tabs = QTabWidget()
         # Добавление вкладки для OPC UA тегов
-        tabs.addTab(TagsWidget(), "OPC UA теги")
+        tabs.addTab(TagsWidget(), "Данные реального времени")
         # Добавление вкладки для данных БД, которая управляется контроллером истории
         tabs.addTab(self._history.data_widget, "Данные БД")
         # Добавление вкладки для экспорта, которая управляется контроллером истории
@@ -150,6 +155,12 @@ class MainWindow(QMainWindow):
         # чтобы сразу отобразить статус USB накопителя
         self._poll_usb()
 
+        # Experiment status polling timer
+        self._exp_timer = QTimer(self)
+        self._exp_timer.timeout.connect(self._poll_experiment)
+        self._exp_timer.start(2000)
+        self._poll_experiment()
+
         # Подключение сигнала нажатия кнопки настроек к методу открытия диалогового окна настроек
         self.btn_settings.clicked.connect(self._on_settings)
 
@@ -173,6 +184,26 @@ class MainWindow(QMainWindow):
             self._conn_label.setText("Сервер недоступен")
 
     # Метод для опроса USB устройств и обновления статуса USB накопителя
+    def _poll_experiment(self):
+        try:
+            tags = api_client.get_tags()
+        except Exception:
+            return
+        tag_map = {t["tag_name"]: t["value"] for t in tags}
+        def _bool(name):
+            return str(tag_map.get(name, "False")).lower() in ("true", "1")
+        in_process = _bool("inProcess")
+        ended      = _bool("End")
+        if in_process:
+            self._exp_label.setText("● Идёт испытание")
+            self._exp_label.setStyleSheet("color: #2ecc71; font-weight: bold;")
+        elif ended:
+            self._exp_label.setText("● Окончено")
+            self._exp_label.setStyleSheet("color: #e67e22; font-weight: bold;")
+        else:
+            self._exp_label.setText("● Ожидание")
+            self._exp_label.setStyleSheet("color: #888888; font-weight: bold;")
+
     def _poll_usb(self):
         """
         Опрос USB устройств и обновление статуса USB накопителя:

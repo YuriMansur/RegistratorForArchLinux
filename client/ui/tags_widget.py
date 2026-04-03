@@ -13,6 +13,7 @@ def _utc_to_local(utc_str: str) -> str:
     return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
 
 _POLL_INTERVAL_MS = 1000
+_SKIP_TAGS = {"inProcess", "End"}
 
 
 class TagsWidget(QWidget):
@@ -26,7 +27,7 @@ class TagsWidget(QWidget):
     def _build_ui(self):
         layout = QVBoxLayout(self)
 
-        layout.addWidget(QLabel("Теги OPC UA — последние значения"))
+        layout.addWidget(QLabel("Последние данные"))
 
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Имя", "Значение", "Обновлено"])
@@ -50,13 +51,16 @@ class TagsWidget(QWidget):
         try:
             tags = api_client.get_tags()
             self._fill(tags)
-            self.status_label.setText(f"Тегов: {len(tags)}")
+            visible = [t for t in tags if t["tag_name"] not in _SKIP_TAGS]
+            self.status_label.setText(f"Тегов: {len(visible)}")
         except requests.RequestException as e:
             self.status_label.setText(f"Ошибка: {e}")
 
     def _fill(self, tags: list[dict]):
         self.table.setRowCount(0)
         for tag in tags:
+            if tag["tag_name"] in _SKIP_TAGS:
+                continue
             row = self.table.rowCount()
             self.table.insertRow(row)
             self.table.setItem(row, 0, QTableWidgetItem(tag["tag_name"]))

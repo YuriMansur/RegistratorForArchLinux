@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QColorDialog, QFrame, QComboBox,
     QLabel, QScrollArea,
 )
-from PyQt6.QtCore import Qt, QDateTime
+from PyQt6.QtCore import Qt, QDateTime, QTimer
 from PyQt6.QtGui import QColor
 
 import api_client
@@ -192,10 +192,13 @@ class TrendsWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._channels: dict = {}   # tag_name → channel dict
+        self._live_data: dict[str, tuple[list, list]] = {}
+        self._live_paused = False
+        self._live_timer = QTimer(self)
+        self._live_timer.timeout.connect(self._live_tick)
         self._setup_ui()
         self._load_tags()
         self._load_checkouts()
-        self._on_checkout_changed(0)
 
 
     # ── UI ────────────────────────────────────────────────────────────────────
@@ -254,6 +257,19 @@ class TrendsWidget(QWidget):
         self.btn_load = QPushButton("Построить")
         self.btn_load.clicked.connect(self._load_archive)
         arch_layout.addWidget(self.btn_load)
+
+        self._btn_live = QPushButton("● Live")
+        self._btn_live.setCheckable(True)
+        self._btn_live.setFixedWidth(64)
+        self._btn_live.setStyleSheet(
+            "QPushButton { color: #aaaaaa; background: #3a3a3a; border: 1px solid #555; border-radius: 3px; padding: 1px 6px; font-weight: bold; }"
+            "QPushButton:checked { color: #ffffff; background: #1e7e34; border: 1px solid #28a745; }"
+            "QPushButton:hover { background: #484848; }"
+            "QPushButton:checked:hover { background: #218838; }"
+        )
+        self._btn_live.toggled.connect(self._toggle_live)
+        arch_layout.addWidget(self._btn_live)
+
         arch_layout.addStretch()
         root.addWidget(arch_frame)
 
@@ -400,6 +416,18 @@ class TrendsWidget(QWidget):
                 pg.ViewBox.wheelEvent(_vb, ev, axis=1)
         _vb.wheelEvent = _wheel
 
+        # пауза live-скролла пока зажата мышь
+        _orig_press   = self._plot.mousePressEvent
+        _orig_release = self._plot.mouseReleaseEvent
+        def _plot_press(ev):
+            self._live_paused = True
+            _orig_press(ev)
+        def _plot_release(ev):
+            self._live_paused = False
+            _orig_release(ev)
+        self._plot.mousePressEvent   = _plot_press
+        self._plot.mouseReleaseEvent = _plot_release
+
     # ── Каналы ────────────────────────────────────────────────────────────────
 
     _SKIP_TAGS = {"inProcess", "End"}
@@ -439,6 +467,7 @@ class TrendsWidget(QWidget):
                 restore_idx = i + 1
         self._checkout_combo.setCurrentIndex(restore_idx)
         self._checkout_combo.blockSignals(False)
+        self._on_checkout_changed(restore_idx)
 
     def _on_checkout_changed(self, _):
         checkout = self._checkout_combo.currentData()
@@ -472,7 +501,6 @@ class TrendsWidget(QWidget):
             pen=pg.mkPen(color=QColor(color), width=2),
             name=name,
         )
-        curve.setDownsampling(auto=True, method='peak')
         curve.setClipToView(True)
         self._channels[name] = {
             'curve':      curve,
@@ -597,6 +625,53 @@ class TrendsWidget(QWidget):
     def _set_all_points(self, checked: bool):
         for name in self._channels:
             self._set_points(name, checked)
+
+    # ── Live ──────────────────────────────────────────────────────────────────
+
+    def _toggle_live(self, checked: bool):
+        if checked:
+            self._load_tags()
+            self._live_data = {name: ([], []) for name in self._channels}
+            for ch in self._channels.values():
+                ch['curve'].setData([], [])
+            self._checkout_combo.setEnabled(False)
+            self._dt_from.setEnabled(False)
+            self._dt_to.setEnabled(False)
+            for b in self._preset_buttons:
+                b.setEnabled(False)
+            self.btn_load.setEnabled(False)
+            self._live_timer.start(2000)
+            self._live_tick()
+        else:
+            self._live_timer.stop()
+            self._checkout_combo.setEnabled(True)
+            self.btn_load.setEnabled(True)
+            self._on_checkout_changed(self._checkout_combo.currentIndex())
+
+    def _live_tick(self):
+        try:
+            tags = api_client.get_tags()
+        except Exception:
+            return
+        now = _dt.datetime.now().timestamp()
+        tag_map = {t["tag_name"]: t["value"] for t in tags}
+        for name, ch in self._channels.items():
+            if not ch['visible'] or name not in tag_map:
+                continue
+            try:
+                val = float(tag_map[name])
+            except (ValueError, TypeError):
+                continue
+            buf = self._live_data.setdefault(name, ([], []))
+            buf[0].append(now)
+            buf[1].append(val)
+            ch['curve'].setData(buf[0], buf[1])
+        if not self._live_paused:
+            vb = self._plot.getViewBox()
+            window = vb.viewRange()[0][1] - vb.viewRange()[0][0]
+            if window <= 0:
+                window = 60
+            self._plot.setXRange(now - window, now, padding=0)
 
     # ── Архив ─────────────────────────────────────────────────────────────────
 
