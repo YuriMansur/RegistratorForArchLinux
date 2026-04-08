@@ -1,189 +1,124 @@
 import io
-import threading
+import shutil
 import zipfile
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from pathlib import Path
 from typing import Optional
-from sqlalchemy.orm import Session
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from db.database import get_db
-from db.models import Record, TagValue, TagHistory, Tag, Checkout
-from db.schemas import RecordCreate, RecordUpdate, RecordOut, TagValueOut, TagHistoryOut, CheckoutOut
+from db.schemas import TagValueOut, TagHistoryOut, CheckoutOut
+from db.session_exporter import EXPORT_DIR, export_by_test_id, export_by_date_range
 from usb import usb_monitor, usb_exporter
+from services.tag_service import TagRepository, TagService
+from services.checkout_service import CheckoutRepository, CheckoutService
+from services.history_service import HistoryRepository, HistoryService
 
 router = APIRouter()
-
-
-# ── Records ───────────────────────────────────────────────────────────────────
-
-@router.get("/records/", response_model=list[RecordOut])
-def list_records(db: Session = Depends(get_db)):
-    return db.query(Record).order_by(Record.created_at.desc()).all()
-
-
-@router.post("/records/", response_model=RecordOut, status_code=201)
-def create_record(payload: RecordCreate, db: Session = Depends(get_db)):
-    record = Record(**payload.model_dump())
-    db.add(record)
-    db.commit()
-    db.refresh(record)
-    return record
-
-
-@router.get("/records/{record_id}", response_model=RecordOut)
-def get_record(record_id: int, db: Session = Depends(get_db)):
-    record = db.query(Record).filter(Record.id == record_id).first()
-    if not record:
-        raise HTTPException(status_code=404, detail="Record not found")
-    return record
-
-
-@router.put("/records/{record_id}", response_model=RecordOut)
-def update_record(record_id: int, payload: RecordUpdate, db: Session = Depends(get_db)):
-    record = db.query(Record).filter(Record.id == record_id).first()
-    if not record:
-        raise HTTPException(status_code=404, detail="Record not found")
-    for field, value in payload.model_dump(exclude_none=True).items():
-        setattr(record, field, value)
-    db.commit()
-    db.refresh(record)
-    return record
-
-
-@router.delete("/records/{record_id}", status_code=204)
-def delete_record(record_id: int, db: Session = Depends(get_db)):
-    record = db.query(Record).filter(Record.id == record_id).first()
-    if not record:
-        raise HTTPException(status_code=404, detail="Record not found")
-    db.delete(record)
-    db.commit()
 
 
 # ── Tags ──────────────────────────────────────────────────────────────────────
 
 @router.get("/tags/latest", response_model=list[TagValueOut])
-def get_latest_tags(db: Session = Depends(get_db)):
-    return db.query(TagValue).order_by(TagValue.tag_name).all()
-
-
-@router.get("/tags/latest/{tag_id:path}", response_model=TagValueOut)
-def get_tag(tag_id: str, db: Session = Depends(get_db)):
-    row = db.get(TagValue, tag_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Tag not found")
-    return row
+async def get_latest_tags(db: AsyncSession = Depends(get_db)):
+    return await TagService(TagRepository(db)).get_all()
 
 
 # ── Checkouts ─────────────────────────────────────────────────────────────────
 
 @router.get("/checkouts", response_model=list[CheckoutOut])
-def get_checkouts(db: Session = Depends(get_db)):
-    return db.query(Checkout).order_by(Checkout.started_at.desc()).all()
+async def get_checkouts(db: AsyncSession = Depends(get_db)):
+    return await CheckoutService(CheckoutRepository(db)).get_all()
 
 
 @router.post("/checkouts/{checkout_id}/export", status_code=202)
-def export_checkout(checkout_id: int, db: Session = Depends(get_db)):
-    checkout = db.get(Checkout, checkout_id)
-    if not checkout:
-        raise HTTPException(status_code=404, detail="Checkout not found")
-    from db import session_exporter
-    threading.Thread(
-        target=session_exporter.export_by_test_id,
-        args=(checkout_id,),
-        daemon=True,
-    ).start()
+async def export_checkout(
+    checkout_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    await CheckoutService(CheckoutRepository(db)).get_by_id(checkout_id)
+    background_tasks.add_task(export_by_test_id, checkout_id)
     return {"status": "export started", "checkout_id": checkout_id}
 
 
 @router.get("/checkouts/{checkout_id}/history", response_model=list[TagHistoryOut])
-def get_checkout_history(checkout_id: int, db: Session = Depends(get_db)):
-    rows = (
-        db.query(TagHistory, Tag)
-        .outerjoin(Tag, TagHistory.tag_id == Tag.id)
-        .filter(TagHistory.test_id == checkout_id)
-        .order_by(TagHistory.recorded_at)
-        .all()
-    )
-    result = []
-    for h, tag in rows:
-        h.tag_name = tag.name if tag else ""
-        result.append(h)
-    return result
+async def get_checkout_history(checkout_id: int, db: AsyncSession = Depends(get_db)):
+    return await HistoryService(HistoryRepository(db)).get_by_checkout(checkout_id)
 
 
 # ── History ───────────────────────────────────────────────────────────────────
 
 @router.get("/history", response_model=list[TagHistoryOut])
-def get_history(limit: int = 1000, db: Session = Depends(get_db)):
-    rows = (
-        db.query(TagHistory, Tag)
-        .outerjoin(Tag, TagHistory.tag_id == Tag.id)
-        .order_by(TagHistory.recorded_at.desc())
-        .limit(limit)
-        .all()
-    )
-    result = []
-    for h, tag in rows:
-        h.tag_name = tag.name if tag else ""
-        result.append(h)
-    return result
+async def get_history(limit: int = 1000, db: AsyncSession = Depends(get_db)):
+    return await HistoryService(HistoryRepository(db)).get_recent(limit)
+
+
+@router.get("/history/range/count")
+async def get_history_range_count(
+    from_dt: datetime,
+    to_dt: datetime,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    count = await HistoryService(HistoryRepository(db)).count_range(from_dt, to_dt)
+    return {"count": count}
 
 
 @router.get("/history/range", response_model=list[TagHistoryOut])
-def get_history_range(
+async def get_history_range(
     from_dt: datetime,
     to_dt: datetime,
     tags: Optional[list[str]] = Query(default=None),
-    db: Session = Depends(get_db),
+    max_points: Optional[int] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
 ):
-    # SQLite хранит naive UTC — снимаем tzinfo перед сравнением
-    from_naive = from_dt.replace(tzinfo=None)
-    to_naive   = to_dt.replace(tzinfo=None)
-    q = (
-        db.query(TagHistory, Tag)
-        .outerjoin(Tag, TagHistory.tag_id == Tag.id)
-        .filter(TagHistory.recorded_at >= from_naive)
-        .filter(TagHistory.recorded_at <= to_naive)
-    )
-    if tags:
-        q = q.filter(Tag.name.in_(tags))
-    rows = q.order_by(TagHistory.recorded_at).all()
-    result = []
-    for h, tag in rows:
-        h.tag_name = tag.name if tag else ""
-        result.append(h)
-    return result
+    return await HistoryService(HistoryRepository(db)).get_range(from_dt, to_dt, tags, max_points)
+
+
+@router.get("/history/stream")
+async def stream_history_range(
+    from_dt: datetime,
+    to_dt: datetime,
+    tags: Optional[list[str]] = Query(default=None),
+):
+    from db.database import AsyncSessionLocal
+
+    async def _generate():
+        async with AsyncSessionLocal() as db:
+            async for line in HistoryRepository(db).stream_range(from_dt, to_dt, tags):
+                yield line
+
+    return StreamingResponse(_generate(), media_type="application/x-ndjson")
 
 
 @router.post("/history/export-range", status_code=202)
-def export_history_range(from_dt: datetime, to_dt: datetime):
-    from db import session_exporter
-    threading.Thread(
-        target=session_exporter.export_by_date_range,
-        args=(from_dt, to_dt),
-        daemon=True,
-    ).start()
+async def export_history_range(
+    from_dt: datetime,
+    to_dt: datetime,
+    background_tasks: BackgroundTasks,
+):
+    background_tasks.add_task(export_by_date_range, from_dt, to_dt)
     return {"status": "export started"}
 
 
 # ── Exports ───────────────────────────────────────────────────────────────────
 
 @router.get("/exports")
-def list_exports() -> list[dict]:
-    from db.session_exporter import EXPORT_DIR
+async def list_exports() -> list[dict]:
     if not EXPORT_DIR.exists():
         return []
-    result = []
-    for folder in sorted(EXPORT_DIR.iterdir()):
-        if folder.is_dir():
-            files = sorted(f.name for f in folder.iterdir() if f.is_file())
-            result.append({"folder": folder.name, "files": files})
-    return result
+    return [
+        {"folder": folder.name, "files": sorted(f.name for f in folder.iterdir() if f.is_file())}
+        for folder in sorted(EXPORT_DIR.iterdir())
+        if folder.is_dir()
+    ]
 
 
 @router.get("/exports/{folder_name}/download")
-def download_export_folder(folder_name: str):
-    from db.session_exporter import EXPORT_DIR
+async def download_export_folder(folder_name: str):
     folder = EXPORT_DIR / folder_name
     if not folder.exists() or not folder.is_dir():
         raise HTTPException(status_code=404, detail="Папка не найдена")
@@ -193,21 +128,91 @@ def download_export_folder(folder_name: str):
         for f in sorted(folder.iterdir()):
             if f.is_file():
                 zf.write(f, f.name)
+    size = buf.tell()
     buf.seek(0)
     return StreamingResponse(
         buf,
         media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename={folder_name}.zip"},
+        headers={
+            "Content-Disposition": f"attachment; filename={folder_name}.zip",
+            "Content-Length": str(size),
+        },
+    )
+
+
+# ── Disk ──────────────────────────────────────────────────────────────────────
+
+_HOME = Path("/home/user")
+_DB_BACKUPS = _HOME / "registrator_backups"
+_SYS_BACKUPS = _HOME / "system_backups"
+
+
+@router.get("/disk/status")
+async def get_disk_status() -> dict:
+    usage = shutil.disk_usage(_HOME)
+    return {
+        "free_gb": round(usage.free / 1024**3, 1),
+        "total_gb": round(usage.total / 1024**3, 1),
+        "used_percent": round(usage.used / usage.total * 100, 1),
+        "db_backups_count": len(list(_DB_BACKUPS.glob("*"))) if _DB_BACKUPS.exists() else 0,
+        "system_backups_count": len(list(_SYS_BACKUPS.glob("*.fsa"))) if _SYS_BACKUPS.exists() else 0,
+    }
+
+
+@router.get("/db/download")
+async def download_db():
+    import asyncio
+    import sqlite3 as _sqlite3
+    import tempfile
+    db_path = Path("/home/user/registrator.db")
+    if not db_path.exists():
+        raise HTTPException(status_code=404, detail="БД не найдена")
+
+    # Создаём консистентный бэкап (включает WAL) во временный файл
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    tmp_path = Path(tmp.name)
+
+    def _backup():
+        src = _sqlite3.connect(str(db_path))
+        dst = _sqlite3.connect(str(tmp_path))
+        src.backup(dst)
+        dst.close()
+        src.close()
+
+    await asyncio.get_event_loop().run_in_executor(None, _backup)
+
+    size = tmp_path.stat().st_size
+
+    def _iter():
+        try:
+            with open(tmp_path, "rb") as f:
+                while chunk := f.read(1024 * 1024):
+                    yield chunk
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    filename = f"registrator_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.db"
+    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    # Content-Length передаём только если < 2GB — requests не поддерживает больше
+    if size < 2 * 1024 ** 3:
+        headers["Content-Length"] = str(size)
+    else:
+        headers["X-File-Size"] = str(size)
+    return StreamingResponse(
+        _iter(),
+        media_type="application/octet-stream",
+        headers=headers,
     )
 
 
 # ── USB ───────────────────────────────────────────────────────────────────────
 
 @router.get("/usb/devices")
-def get_usb_devices() -> list[dict]:
+async def get_usb_devices() -> list[dict]:
     return usb_monitor.get_devices()
 
 
 @router.get("/usb/export-status")
-def get_export_status() -> dict:
+async def get_export_status() -> dict:
     return {"status": usb_exporter.get_status()}
