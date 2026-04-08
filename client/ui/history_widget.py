@@ -7,8 +7,9 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame,
     QTableWidget, QTableWidgetItem, QPushButton, QLabel, QMessageBox,
     QTreeWidget, QTreeWidgetItem, QFileIconProvider, QComboBox, QFileDialog,
+    QProgressDialog, QApplication,
 )
-from PyQt6.QtCore import Qt, QTimer, QDateTime, QFileInfo, QObject
+from PyQt6.QtCore import Qt, QTimer, QDateTime, QFileInfo, QObject, QThread, pyqtSignal
 import api_client
 from ui.datetime_picker import DateTimePicker
 
@@ -29,6 +30,69 @@ def _iso_to_local_qdt(utc_str: str) -> QDateTime:
                          local.hour, local.minute, local.second)
     except Exception:
         return QDateTime.currentDateTime()
+
+
+class _RefreshCombo(QComboBox):
+    def __init__(self, refresh_fn, parent=None):
+        super().__init__(parent)
+        self._refresh_fn = refresh_fn
+
+    def showPopup(self):
+        self._refresh_fn()
+        super().showPopup()
+
+
+class _DownloadWorker(QThread):
+    progress = pyqtSignal(float)  # MB скачано
+    total    = pyqtSignal(float)  # MB всего
+    done     = pyqtSignal(bytes)
+    error    = pyqtSignal(str)
+
+    def __init__(self, url_path: str):
+        super().__init__()
+        self._url_path = url_path
+
+    def run(self):
+        import requests
+        from config import get_base_url
+        try:
+            with requests.get(f"{get_base_url()}{self._url_path}", stream=True, timeout=(10, None)) as r:
+                r.raise_for_status()
+                raw_size = r.headers.get("x-file-size") or r.headers.get("content-length") or "0"
+                total_bytes = int(raw_size)
+                if total_bytes > 0:
+                    self.total.emit(total_bytes / 1024 / 1024)
+                chunks = []
+                received = 0
+                last_emitted = 0
+                for chunk in r.iter_content(chunk_size=1024 * 1024 * 4):
+                    if chunk:
+                        chunks.append(chunk)
+                        received += len(chunk)
+                        if received - last_emitted >= 1024 * 1024 * 10:
+                            self.progress.emit(received / 1024 / 1024)
+                            last_emitted = received
+                self.progress.emit(received / 1024 / 1024)
+                self.done.emit(b"".join(chunks))
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class _DataLoadWorker(QThread):
+    done  = pyqtSignal(list)
+    error = pyqtSignal(str)
+
+    def __init__(self, from_dt, to_dt):
+        super().__init__()
+        self._from_dt = from_dt
+        self._to_dt   = to_dt
+
+    def run(self):
+        try:
+            rows = api_client.get_history_range(self._from_dt, self._to_dt)
+            self.done.emit(rows)
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 def _pivot_rows(rows: list[dict]) -> tuple[list[str], list[list[str]]]:
@@ -99,6 +163,7 @@ class HistoryController(QObject):
         self._refresh_exports()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh_exports)
+        self._timer.timeout.connect(self._refresh_checkouts)
         self._timer.start(5000)
 
     # ── Построение виджетов ────────────────────────────────────────────────────
@@ -136,7 +201,7 @@ class HistoryController(QObject):
 
         row1.addWidget(QLabel("Испытание:"))
 
-        self._checkout_combo = QComboBox()
+        self._checkout_combo = _RefreshCombo(self._refresh_checkouts)
         self._checkout_combo.setEditable(True)
         self._checkout_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self._checkout_combo.setMinimumWidth(220)
@@ -189,6 +254,9 @@ class HistoryController(QObject):
         btn_download = QPushButton("Скачать папку")
         btn_download.clicked.connect(self._download_selected_folder)
         hl.addWidget(btn_download)
+        btn_download_db = QPushButton("Скачать БД")
+        btn_download_db.clicked.connect(self._download_db)
+        hl.addWidget(btn_download_db)
         hl.addStretch()
         vl.addLayout(hl)
 
@@ -199,6 +267,16 @@ class HistoryController(QObject):
 
         self._btn_download_export = btn_download
         return w
+
+    def _download_db(self):
+        from datetime import datetime
+        default_name = f"registrator_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.db"
+        save_path, _ = QFileDialog.getSaveFileName(
+            None, "Сохранить БД", default_name, "SQLite DB (*.db)"
+        )
+        if not save_path:
+            return
+        self._start_download("/db/download", save_path, "БД сохранена")
 
     def _download_selected_folder(self):
         item = self._exports_tree.currentItem()
@@ -213,13 +291,58 @@ class HistoryController(QObject):
         )
         if not save_path:
             return
+        self._start_download(f"/exports/{folder_name}/download", save_path, "Архив сохранён")
 
-        try:
-            data = api_client.download_export_folder(folder_name)
+    def _start_download(self, url_path: str, save_path: str, success_msg: str):
+        progress_dlg = QProgressDialog("Подготовка к скачиванию...", "Отмена", 0, 0, None)
+        progress_dlg.setWindowTitle("Скачивание")
+        progress_dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress_dlg.setMinimumWidth(350)
+        progress_dlg.setStyleSheet("""
+            QProgressBar {
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #2ecc71;
+            }
+        """)
+        progress_dlg.show()
+        QApplication.processEvents()
+
+        worker = _DownloadWorker(url_path)
+        self._download_worker = worker
+
+        self._total_mb = 0.0
+
+        def on_total(total_mb: float):
+            self._total_mb = total_mb
+            progress_dlg.setMaximum(int(total_mb * 10))
+            progress_dlg.setLabelText(f"Скачивание... 0.0 / {total_mb:.1f} MB")
+
+        def on_progress(received_mb: float):
+            if progress_dlg.wasCanceled():
+                worker.terminate()
+                return
+            progress_dlg.setValue(int(received_mb * 10))
+            if self._total_mb > 0:
+                progress_dlg.setLabelText(f"Скачивание... {received_mb:.1f} / {self._total_mb:.1f} MB")
+            else:
+                progress_dlg.setLabelText(f"Скачивание... {received_mb:.1f} MB")
+
+        def on_done(data: bytes):
+            progress_dlg.close()
             Path(save_path).write_bytes(data)
-            QMessageBox.information(None, "Скачано", f"Сохранено: {save_path}")
-        except Exception as e:
-            QMessageBox.warning(None, "Ошибка", f"Не удалось скачать:\n{e}")
+            QMessageBox.information(None, "Скачано", f"{success_msg}: {save_path}")
+
+        def on_error(msg: str):
+            progress_dlg.close()
+            QMessageBox.warning(None, "Ошибка", f"Не удалось скачать:\n{msg}")
+
+        worker.total.connect(on_total)
+        worker.progress.connect(on_progress)
+        worker.done.connect(on_done)
+        worker.error.connect(on_error)
+        worker.start()
 
     # ── Обновление ────────────────────────────────────────────────────────────
 
@@ -249,9 +372,8 @@ class HistoryController(QObject):
             if isinstance(prev_id, dict) and prev_id.get("id") == cid:
                 restore_idx = i + 1
 
-        self._checkout_combo.blockSignals(False)
         self._checkout_combo.setCurrentIndex(restore_idx)
-        self._on_combo_changed(restore_idx)
+        self._checkout_combo.blockSignals(False)
 
     def _on_combo_changed(self, index: int):
         if index < 0:
@@ -274,20 +396,27 @@ class HistoryController(QObject):
             self._dt_to.setEnabled(False)
             self._btn_export.setEnabled(True)
 
-    def _load_data(self):
-        """Загрузить данные по кнопке — по диапазону дат."""
+    def _load_data(self, *_):
         local_tz = _dt.datetime.now(_dt.timezone.utc).astimezone().tzinfo
         from_dt = (self._dt_from.dateTime().toPyDateTime()
                    .replace(tzinfo=local_tz).astimezone(_dt.timezone.utc))
         to_dt   = (self._dt_to.dateTime().toPyDateTime()
                    .replace(tzinfo=local_tz).astimezone(_dt.timezone.utc))
-        try:
-            rows = api_client.get_history_range(from_dt, to_dt)
-            self._data_label.setText(f"{len(rows)} записей за период")
-        except Exception as e:
-            self._data_label.setText(f"Ошибка: {e}")
-            return
+        self._data_label.setText("Загрузка...")
+        self._btn_load.setEnabled(False)
+        self._worker = _DataLoadWorker(from_dt, to_dt)
+        self._worker.done.connect(self._on_data_loaded)
+        self._worker.error.connect(self._on_data_error)
+        self._worker.start()
+
+    def _on_data_loaded(self, rows: list):
+        self._data_label.setText(f"{len(rows)} записей за период")
+        self._btn_load.setEnabled(True)
         _fill_pivoted(self._data_table, rows)
+
+    def _on_data_error(self, msg: str):
+        self._data_label.setText(f"Ошибка: {msg}")
+        self._btn_load.setEnabled(True)
 
     def _export_selected(self):
         checkout = self._checkout_combo.currentData()

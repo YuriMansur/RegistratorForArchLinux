@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # SQLAlchemy engine и базовый класс моделей
-from db.database import engine, Base
+from db.database import sync_engine, Base
 
 # Без этого импорта Base.metadata.create_all() не создаст таблицы.
 import db.models  # noqa: F401
@@ -31,10 +31,13 @@ from protocol_backend.protocol_client.client_manager import ServerManager
 # USB: мониторинг вставки/извлечения и экспорт данных
 from usb import usb_monitor, usb_exporter
 
+# Фоновый мониторинг дискового пространства с авто-очисткой
+from services.disk_monitor import disk_monitor_loop
+
 
 # Создаём все таблицы БД при старте если они ещё не существуют.
 # При изменении схемы моделей — таблицы нужно пересоздавать вручную.
-Base.metadata.create_all(bind = engine)
+Base.metadata.create_all(bind=sync_engine)
 
 # Глобальная ссылка на менеджер серверов — нужна для graceful shutdown
 _server_manager: ServerManager | None = None
@@ -64,7 +67,13 @@ async def lifespan(_app: FastAPI):
     # Запускаем мониторинг USB через pyudev в отдельном daemon-потоке
     usb_monitor.start()
 
-    yield  # ── приложение работает ──────────────────────────────────────────
+    # Запускаем фоновый мониторинг дискового пространства
+    import asyncio
+    _disk_task = asyncio.create_task(disk_monitor_loop())
+
+    yield
+
+    _disk_task.cancel()  # ── приложение работает ──────────────────────────────────────────
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
 

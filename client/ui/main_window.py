@@ -112,6 +112,10 @@ class MainWindow(QMainWindow):
         self._exp_label.setStyleSheet("color: #888888; font-weight: bold;")
         status_bar.addWidget(self._exp_label)
 
+        status_bar.addSpacing(24)
+        self._disk_label = QLabel("💾 /home: —")
+        status_bar.addWidget(self._disk_label)
+
     # Кнопка настроек подключения
         # Добавление растяжки, чтобы кнопка настроек была прижата к правому краю
         status_bar.addStretch()
@@ -161,6 +165,12 @@ class MainWindow(QMainWindow):
         self._exp_timer.start(2000)
         self._poll_experiment()
 
+        # Disk space polling timer
+        self._disk_timer = QTimer(self)
+        self._disk_timer.timeout.connect(self._poll_disk)
+        self._disk_timer.start(30000)
+        self._poll_disk()
+
         # Подключение сигнала нажатия кнопки настроек к методу открытия диалогового окна настроек
         self.btn_settings.clicked.connect(self._on_settings)
 
@@ -198,10 +208,10 @@ class MainWindow(QMainWindow):
             self._exp_label.setText("● Идёт испытание")
             self._exp_label.setStyleSheet("color: #2ecc71; font-weight: bold;")
         elif ended:
-            self._exp_label.setText("● Окончено")
+            self._exp_label.setText("●Испытание Окончено")
             self._exp_label.setStyleSheet("color: #e67e22; font-weight: bold;")
         else:
-            self._exp_label.setText("● Ожидание")
+            self._exp_label.setText("● Ожидание испытания")
             self._exp_label.setStyleSheet("color: #888888; font-weight: bold;")
 
     def _poll_usb(self):
@@ -261,6 +271,21 @@ class MainWindow(QMainWindow):
             # чтобы показать информацию о подключенных устройствах и статусе экспорта
             self._usb_status_label.setText(f"USB Накопитель: {names}{status_text}")
 
+
+    def _poll_disk(self):
+        status = api_client.get_disk_status()
+        if status is None:
+            self._disk_label.setText("💾 Memory: —")
+            self._disk_label.setStyleSheet("")
+            return
+        free = status["free_gb"]
+        self._disk_label.setText(f"💾 Memory: {free} GB")
+        if free > 20:
+            self._disk_label.setStyleSheet("color: #2ecc71;")
+        elif free > 10:
+            self._disk_label.setStyleSheet("color: #f39c12;")
+        else:
+            self._disk_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
 
     # Метод для обработки нажатия кнопки настроек подключения
     def _on_settings(self):
