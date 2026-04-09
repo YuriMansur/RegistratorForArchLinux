@@ -17,6 +17,8 @@ from db import tag_writer
 from db import session_exporter
 # test_manager — создаёт и завершает записи об испытании в таблице checkouts.
 from db import test_manager
+# live_data — хранилище последних значений тегов в памяти для /tags/live.
+from services import live_data
 
 
 # ── Конфигурация серверов ─────────────────────────────────────────────────────
@@ -39,7 +41,7 @@ _SERVERS = [
         "polls"             : [
             # arrays — группа опроса всех данных испытания (ForUra).
             # sequential=True: читать узлы последовательно, чтобы не перегружать ПЛК.
-            {"name": "arrays", "nodes": [Tags.ForUra, Tags.ForUra2], "interval": 1.0, "sequential": False},
+            {"name": "arrays", "nodes": [Tags.values], "interval": 1.0, "sequential": False},
         ],
     },
 ]
@@ -248,6 +250,7 @@ class ServerManager:
             poll_name (str): Имя группы опроса.
             batch (dict): {node_id: value} — все теги, прочитанные за один цикл."""
         now = datetime.now(timezone.utc)
+        live_batch: dict[str, tuple[str, datetime]] = {}
         for nid, val in batch.items():
             nid = self._normalize_nid(nid)
             tag_name = _NODE_NAMES.get(nid, nid)
@@ -259,6 +262,13 @@ class ServerManager:
                 test_id=self._current_test_id,
                 recorded_at=now,
             )
+            from db.tag_writer import _serialize
+            if isinstance(val, (list, tuple)):
+                for i, item in enumerate(val):
+                    live_batch[f"{tag_name}[{i}]"] = (_serialize(item), now)
+            else:
+                live_batch[tag_name] = (_serialize(val), now)
+        live_data.update_batch(live_batch)
 
     def _handle_control(self, nid: str, val):
         """Обработать управляющий тег — запустить или завершить сессию испытания.

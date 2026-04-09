@@ -49,6 +49,10 @@ def get_tags() -> list[dict]:
     return _get("/tags/latest", timeout=TIMEOUT).json()
 
 
+def get_live_tags() -> list[dict]:
+    return _get("/tags/live", timeout=TIMEOUT).json()
+
+
 def get_history(limit: int = 10000) -> list[dict]:
     return _get("/history", params={"limit": limit}, timeout=TIMEOUT).json()
 
