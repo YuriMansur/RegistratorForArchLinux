@@ -1,19 +1,7 @@
 from datetime import datetime
-from sqlalchemy import String, DateTime, Integer, ForeignKey, func
+from sqlalchemy import String, DateTime, Integer, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 from db.database import Base
-
-
-class Record(Base):
-    __tablename__ = "records"
-
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    title: Mapped[str] = mapped_column(String(255))
-    description: Mapped[str] = mapped_column(String(1000), default="")
-    tags: Mapped[str] = mapped_column(String(500), default="")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
-    )
 
 
 class TagValue(Base):

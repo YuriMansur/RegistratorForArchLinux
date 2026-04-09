@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame,
     QTableWidget, QTableWidgetItem, QPushButton, QLabel, QMessageBox,
     QTreeWidget, QTreeWidgetItem, QFileIconProvider, QComboBox, QFileDialog,
-    QProgressDialog, QApplication,
+    QProgressBar, QDialog,
 )
 from PyQt6.QtCore import Qt, QTimer, QDateTime, QFileInfo, QObject, QThread, pyqtSignal
 import api_client
@@ -254,9 +254,7 @@ class HistoryController(QObject):
         btn_download = QPushButton("Скачать папку")
         btn_download.clicked.connect(self._download_selected_folder)
         hl.addWidget(btn_download)
-        btn_download_db = QPushButton("Скачать БД")
-        btn_download_db.clicked.connect(self._download_db)
-        hl.addWidget(btn_download_db)
+
         hl.addStretch()
         vl.addLayout(hl)
 
@@ -267,16 +265,6 @@ class HistoryController(QObject):
 
         self._btn_download_export = btn_download
         return w
-
-    def _download_db(self):
-        from datetime import datetime
-        default_name = f"registrator_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.db"
-        save_path, _ = QFileDialog.getSaveFileName(
-            None, "Сохранить БД", default_name, "SQLite DB (*.db)"
-        )
-        if not save_path:
-            return
-        self._start_download("/db/download", save_path, "БД сохранена")
 
     def _download_selected_folder(self):
         item = self._exports_tree.currentItem()
@@ -294,49 +282,66 @@ class HistoryController(QObject):
         self._start_download(f"/exports/{folder_name}/download", save_path, "Архив сохранён")
 
     def _start_download(self, url_path: str, save_path: str, success_msg: str):
-        progress_dlg = QProgressDialog("Подготовка к скачиванию...", "Отмена", 0, 0, None)
-        progress_dlg.setWindowTitle("Скачивание")
-        progress_dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
-        progress_dlg.setMinimumWidth(350)
-        progress_dlg.setStyleSheet("""
+        dlg = QDialog(None)
+        dlg.setWindowTitle("Скачивание")
+        dlg.setMinimumWidth(400)
+        dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
+        layout = QVBoxLayout(dlg)
+
+        status_label = QLabel("Подготовка...")
+        layout.addWidget(status_label)
+
+        progress = QProgressBar()
+        progress.setRange(0, 0)
+        progress.setStyleSheet("""
             QProgressBar {
                 text-align: center;
+                border: 1px solid #555;
+                border-radius: 3px;
+                background: #2b2b2b;
+                color: #ffffff;
             }
             QProgressBar::chunk {
                 background-color: #2ecc71;
+                border-radius: 3px;
             }
         """)
-        progress_dlg.show()
-        QApplication.processEvents()
+        layout.addWidget(progress)
+
+        btn_close = QPushButton("Закрыть")
+        btn_close.setEnabled(False)
+        btn_close.clicked.connect(dlg.accept)
+        layout.addWidget(btn_close)
+
+        dlg.show()
 
         worker = _DownloadWorker(url_path)
         self._download_worker = worker
-
         self._total_mb = 0.0
 
         def on_total(total_mb: float):
             self._total_mb = total_mb
-            progress_dlg.setMaximum(int(total_mb * 10))
-            progress_dlg.setLabelText(f"Скачивание... 0.0 / {total_mb:.1f} MB")
+            progress.setRange(0, int(total_mb * 10))
+            status_label.setText(f"Скачивание... 0.0 / {total_mb:.1f} MB")
 
         def on_progress(received_mb: float):
-            if progress_dlg.wasCanceled():
-                worker.terminate()
-                return
-            progress_dlg.setValue(int(received_mb * 10))
+            progress.setValue(int(received_mb * 10))
             if self._total_mb > 0:
-                progress_dlg.setLabelText(f"Скачивание... {received_mb:.1f} / {self._total_mb:.1f} MB")
+                status_label.setText(f"Скачивание... {received_mb:.1f} / {self._total_mb:.1f} MB")
             else:
-                progress_dlg.setLabelText(f"Скачивание... {received_mb:.1f} MB")
+                status_label.setText(f"Скачивание... {received_mb:.1f} MB")
 
         def on_done(data: bytes):
-            progress_dlg.close()
             Path(save_path).write_bytes(data)
-            QMessageBox.information(None, "Скачано", f"{success_msg}: {save_path}")
+            status_label.setText(f"Готово: {save_path}")
+            progress.setValue(progress.maximum() if progress.maximum() > 0 else 1)
+            progress.setRange(0, 1)
+            btn_close.setEnabled(True)
 
         def on_error(msg: str):
-            progress_dlg.close()
-            QMessageBox.warning(None, "Ошибка", f"Не удалось скачать:\n{msg}")
+            status_label.setText(f"Ошибка: {msg}")
+            progress.setRange(0, 1)
+            btn_close.setEnabled(True)
 
         worker.total.connect(on_total)
         worker.progress.connect(on_progress)

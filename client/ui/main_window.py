@@ -9,6 +9,8 @@ from ui.settings_dialog import SettingsDialog
 from ui.tags_widget import TagsWidget
 from ui.history_widget import HistoryController
 from ui.trends_widget import TrendsWidget
+from ui.db_download_dialog import DbDownloadDialog
+from ui.backups_widget import BackupsWidget
 
 # Цвета для индикаторов статуса
 _DOT_GREEN  = "background-color: #2ecc71; border-radius: 8px;"
@@ -113,14 +115,30 @@ class MainWindow(QMainWindow):
         status_bar.addWidget(self._exp_label)
 
         status_bar.addSpacing(24)
-        self._disk_label = QLabel("💾 /home: —")
+        self._disk_label = QLabel("💾 Free: —")
         status_bar.addWidget(self._disk_label)
+
+        status_bar.addSpacing(24)
+        self._db_label = QLabel("🗄 DB: —")
+        status_bar.addWidget(self._db_label)
+
+        btn_db_dl = QPushButton("🗄⬇")
+        btn_db_dl.setFixedHeight(22)
+        btn_db_dl.setToolTip("Скачать базу данных")
+        btn_db_dl.setStyleSheet(
+            "QPushButton { font-size: 11px; padding: 0 6px; color: #4fc3f7; border: 1px solid #4fc3f7; border-radius: 3px; background: transparent; }"
+            "QPushButton:hover { background: rgba(79,195,247,0.15); }"
+        )
+        btn_db_dl.clicked.connect(lambda: (dlg := DbDownloadDialog(self)) and dlg.exec())
+        status_bar.addWidget(btn_db_dl)
 
     # Кнопка настроек подключения
         # Добавление растяжки, чтобы кнопка настроек была прижата к правому краю
         status_bar.addStretch()
         # Кнопка для открытия настроек подключения
-        self.btn_settings = QPushButton("Настройки подключения")
+        self.btn_settings = QPushButton("⚙")
+        self.btn_settings.setFixedSize(28, 28)
+        self.btn_settings.setToolTip("Настройки подключения")
         # Добавление кнопки настроек в строку статусов
         status_bar.addWidget(self.btn_settings)
         # Добавление строки статусов в основной лэйаут
@@ -133,12 +151,10 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         # Добавление вкладки для OPC UA тегов
         tabs.addTab(TagsWidget(), "Данные реального времени")
-        # Добавление вкладки для данных БД, которая управляется контроллером истории
-        tabs.addTab(self._history.data_widget, "Данные БД")
-        # Добавление вкладки для экспорта, которая управляется контроллером истории
-        tabs.addTab(self._history.exports_widget, "Экспорты")
-        # Добавление вкладки для трендов
         tabs.addTab(TrendsWidget(), "Тренды")
+        tabs.addTab(self._history.data_widget, "Данные БД")
+        tabs.addTab(self._history.exports_widget, "Экспорты")
+        tabs.addTab(BackupsWidget(), "Бэкапы")
         # Добавление виджета вкладок в основной лэйаут
         root.addWidget(tabs)
 
@@ -208,7 +224,7 @@ class MainWindow(QMainWindow):
             self._exp_label.setText("● Идёт испытание")
             self._exp_label.setStyleSheet("color: #2ecc71; font-weight: bold;")
         elif ended:
-            self._exp_label.setText("●Испытание Окончено")
+            self._exp_label.setText("● Испытание окончено")
             self._exp_label.setStyleSheet("color: #e67e22; font-weight: bold;")
         else:
             self._exp_label.setText("● Ожидание испытания")
@@ -275,17 +291,32 @@ class MainWindow(QMainWindow):
     def _poll_disk(self):
         status = api_client.get_disk_status()
         if status is None:
-            self._disk_label.setText("💾 Memory: —")
+            self._disk_label.setText("💾 Свободно: —")
             self._disk_label.setStyleSheet("")
+            self._db_label.setText("🗄 ДБ: —")
+            self._db_label.setStyleSheet("")
             return
         free = status["free_gb"]
-        self._disk_label.setText(f"💾 Memory: {free} GB")
+        db_mb = status.get("db_mb", 0)
+        self._disk_label.setText(f"💾 Свободно: {free} GB")
         if free > 20:
             self._disk_label.setStyleSheet("color: #2ecc71;")
         elif free > 10:
             self._disk_label.setStyleSheet("color: #f39c12;")
         else:
             self._disk_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
+        if db_mb >= 1024:
+            db_text = f"🗄 ДБ: {round(db_mb / 1024, 1)} GB"
+        else:
+            db_text = f"🗄 ДБ: {db_mb} MB"
+        if db_mb >= 102400:       # > 100 GB
+            db_color = "#e74c3c"
+        elif db_mb >= 40960:      # 40–100 GB
+            db_color = "#f39c12"
+        else:                     # < 40 GB
+            db_color = "#2ecc71"
+        self._db_label.setText(db_text)
+        self._db_label.setStyleSheet(f"color: {db_color};")
 
     # Метод для обработки нажатия кнопки настроек подключения
     def _on_settings(self):

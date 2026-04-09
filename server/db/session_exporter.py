@@ -96,11 +96,14 @@ def export_by_date_range(from_dt: datetime, to_dt: datetime) -> None:
     session_dir = EXPORT_DIR / folder_name
     session_dir.mkdir(parents=True, exist_ok=True)
 
-    ts = _fmt(to_dt)
-    _write_xlsx(session_dir / f"data_{ts}.xlsx", rows)
-    _write_docx(session_dir / f"data_{ts}.docx", rows)
-    _write_png_per_tag(session_dir, rows)
-    log.info("Export range done: %d rows → %s", len(rows), session_dir.name)
+    try:
+        ts = _fmt(to_dt)
+        _write_xlsx(session_dir / f"data_{ts}.xlsx", rows)
+        _write_docx(session_dir / f"data_{ts}.docx", rows)
+        _write_png_per_tag(session_dir, rows)
+        log.info("Export range done: %d rows → %s", len(rows), session_dir.name)
+    except Exception:
+        log.exception("Export range failed")
 
 
 def _export(test_id: int, session_start: datetime, session_end: datetime) -> None:
@@ -130,10 +133,13 @@ def _export(test_id: int, session_start: datetime, session_end: datetime) -> Non
     session_dir.mkdir(parents=True, exist_ok=True)
 
     ts = _fmt(session_end)
-    _write_xlsx(session_dir / f"session_{ts}.xlsx", rows)
-    _write_docx(session_dir / f"session_{ts}.docx", rows)
-    _write_png_per_tag(session_dir, rows)
-    log.info("Export done: %d rows → %s", len(rows), session_dir.name)
+    try:
+        _write_xlsx(session_dir / f"session_{ts}.xlsx", rows)
+        _write_docx(session_dir / f"session_{ts}.docx", rows)
+        _write_png_per_tag(session_dir, rows)
+        log.info("Export done: %d rows → %s", len(rows), session_dir.name)
+    except Exception:
+        log.exception("Export failed for test_id=%s", test_id)
 
 
 def _pivot(rows: list):
@@ -234,9 +240,12 @@ def _write_png_per_tag(session_dir: Path, rows: list) -> None:
         if not tag_times:
             continue
 
-        fig, ax = plt.subplots(figsize=(14, 6))
+        width = max(24, len(tag_times) // 10)
+        fig, ax = plt.subplots(figsize=(width, 6))
         ax.plot(tag_times, values, linewidth=1.2, color="steelblue")
+        ax.set_xlim(tag_times[0], tag_times[-1])
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S", tz=local_tz))
+        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
         fig.autofmt_xdate()
         ax.set_xlabel("Время")
         ax.set_ylabel(header)

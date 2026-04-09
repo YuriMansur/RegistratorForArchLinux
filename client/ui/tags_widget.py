@@ -12,7 +12,7 @@ def _utc_to_local(utc_str: str) -> str:
     dt = datetime.fromisoformat(utc_str).replace(tzinfo=timezone.utc)
     return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
 
-_POLL_INTERVAL_MS = 1000
+_POLL_INTERVAL_MS = 500
 _SKIP_TAGS = {"inProcess", "End"}
 
 
@@ -49,7 +49,9 @@ class TagsWidget(QWidget):
 
     def _load(self):
         try:
-            tags = api_client.get_tags()
+            tags = api_client.get_live_tags()
+            if not tags:
+                tags = api_client.get_tags()
             self._fill(tags)
             visible = [t for t in tags if t["tag_name"] not in _SKIP_TAGS]
             self.status_label.setText(f"Тегов: {len(visible)}")
@@ -57,13 +59,33 @@ class TagsWidget(QWidget):
             self.status_label.setText(f"Ошибка: {e}")
 
     def _fill(self, tags: list[dict]):
+        # Берём общий timestamp из первого тега
+        ts = ""
+        for tag in tags:
+            if tag["tag_name"] not in _SKIP_TAGS and tag.get("updated_at"):
+                ts = _utc_to_local(tag["updated_at"][:19])
+                break
+
         self.table.setRowCount(0)
         for tag in tags:
             if tag["tag_name"] in _SKIP_TAGS:
                 continue
+            value_str = tag["value"]
+            if value_str.startswith("["):
+                try:
+                    import ast
+                    items = ast.literal_eval(value_str)
+                    for i, item in enumerate(items):
+                        row = self.table.rowCount()
+                        self.table.insertRow(row)
+                        self.table.setItem(row, 0, QTableWidgetItem(f"{tag['tag_name']}[{i}]"))
+                        self.table.setItem(row, 1, QTableWidgetItem(str(item)))
+                        self.table.setItem(row, 2, QTableWidgetItem(ts))
+                    continue
+                except Exception:
+                    pass
             row = self.table.rowCount()
             self.table.insertRow(row)
             self.table.setItem(row, 0, QTableWidgetItem(tag["tag_name"]))
-            self.table.setItem(row, 1, QTableWidgetItem(tag["value"]))
-            updated = _utc_to_local(tag["updated_at"][:19])
-            self.table.setItem(row, 2, QTableWidgetItem(updated))
+            self.table.setItem(row, 1, QTableWidgetItem(value_str))
+            self.table.setItem(row, 2, QTableWidgetItem(ts))

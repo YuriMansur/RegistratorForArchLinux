@@ -1,27 +1,38 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
-
-# ССылка на SQLite файл БД. В нашем случае — в той же папке, что и сервер.
-DATABASE_URL = "sqlite:///./registrator.db"
-# SQLAlchemy Engine — управляет соединениями с БД, создаёт их по мере необходимости.
-engine = create_engine( DATABASE_URL, connect_args={"check_same_thread": False})
-# Сессия для работы с БД: создаётся при входе в эндпоинт и закрывается при выходе (даже при ошибке).
-SessionLocal = sessionmaker(autocommit = False, autoflush = False, bind = engine)
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 
 
-# Базовый класс для моделей SQLAlchemy
+def _set_wal(dbapi_conn, _):
+    dbapi_conn.execute("PRAGMA journal_mode=WAL")
+    dbapi_conn.execute("PRAGMA synchronous=NORMAL")
+
+
+# Async engine — используется в FastAPI эндпоинтах
+_DB_PATH = "/home/user/registrator.db"
+
+async_engine = create_async_engine(
+    f"sqlite+aiosqlite:///{_DB_PATH}",
+    echo=False,
+    connect_args={"timeout": 30},
+)
+AsyncSessionLocal = async_sessionmaker(async_engine, expire_on_commit=False, class_=AsyncSession)
+
+# Sync engine — используется в фоновых задачах (session_exporter, usb_exporter)
+# и для создания таблиц при старте
+sync_engine = create_engine(
+    f"sqlite:///{_DB_PATH}",
+    connect_args={"check_same_thread": False, "timeout": 30},
+)
+event.listen(sync_engine, "connect", _set_wal)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
+
+
 class Base(DeclarativeBase):
     pass
 
 
-# Dependency для получения сессии БД в эндпоинтах FastAPI
-def get_db():
-    """Создаёт новую сессию БД для каждого запроса и гарантирует её закрытие после обработки."""
-    # Сессия создаётся при входе в эндпоинт и закрывается при выходе (даже при ошибке).
-    db = SessionLocal()
-    try:
-        # yield позволяет использовать эту функцию как контекстный менеджер в Depends(get_db).
-        yield db
-    finally:
-        # Закрываем сессию после обработки запроса, освобождая ресурсы.
-        db.close()
+async def get_db():
+    """Dependency: async сессия БД для FastAPI эндпоинтов."""
+    async with AsyncSessionLocal() as session:
+        yield session

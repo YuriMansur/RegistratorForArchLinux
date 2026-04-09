@@ -16,6 +16,7 @@ from usb import usb_monitor, usb_exporter
 from services.tag_service import TagRepository, TagService
 from services.checkout_service import CheckoutRepository, CheckoutService
 from services.history_service import HistoryRepository, HistoryService
+from services import live_data
 
 router = APIRouter()
 
@@ -25,6 +26,11 @@ router = APIRouter()
 @router.get("/tags/latest", response_model=list[TagValueOut])
 async def get_latest_tags(db: AsyncSession = Depends(get_db)):
     return await TagService(TagRepository(db)).get_all()
+
+
+@router.get("/tags/live")
+async def get_live_tags() -> list[dict]:
+    return live_data.get_all()
 
 
 # ── Checkouts ─────────────────────────────────────────────────────────────────
@@ -150,10 +156,13 @@ _SYS_BACKUPS = _HOME / "system_backups"
 @router.get("/disk/status")
 async def get_disk_status() -> dict:
     usage = shutil.disk_usage(_HOME)
+    db_path = Path("/home/user/registrator.db")
+    db_mb = round(db_path.stat().st_size / 1024**2, 1) if db_path.exists() else 0
     return {
         "free_gb": round(usage.free / 1024**3, 1),
         "total_gb": round(usage.total / 1024**3, 1),
         "used_percent": round(usage.used / usage.total * 100, 1),
+        "db_mb": db_mb,
         "db_backups_count": len(list(_DB_BACKUPS.glob("*"))) if _DB_BACKUPS.exists() else 0,
         "system_backups_count": len(list(_SYS_BACKUPS.glob("*.fsa"))) if _SYS_BACKUPS.exists() else 0,
     }
