@@ -65,17 +65,63 @@ class _DownloadWorker(QThread):
                 chunks = []
                 received = 0
                 last_emitted = 0
-                for chunk in r.iter_content(chunk_size=1024 * 1024 * 4):
+                for chunk in r.iter_content(chunk_size=1024 * 512):
                     if chunk:
                         chunks.append(chunk)
                         received += len(chunk)
-                        if received - last_emitted >= 1024 * 1024 * 10:
+                        if received - last_emitted >= 1024 * 1024:
                             self.progress.emit(received / 1024 / 1024)
                             last_emitted = received
                 self.progress.emit(received / 1024 / 1024)
                 self.done.emit(b"".join(chunks))
         except Exception as e:
             self.error.emit(str(e))
+
+
+class _ExportWatchWorker(QThread):
+    found = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, checkout, from_dt=None, to_dt=None):
+        super().__init__()
+        self._checkout = checkout
+        self._from_dt  = from_dt
+        self._to_dt    = to_dt
+        self._running  = True
+
+    def run(self):
+        import time
+        # Снимок до запуска
+        try:
+            snapshot = {f["folder"]: f.get("mtime", 0) for f in api_client.get_exports()}
+        except Exception:
+            snapshot = {}
+
+        # Запускаем экспорт
+        try:
+            if isinstance(self._checkout, dict):
+                api_client.export_checkout(self._checkout["id"])
+            else:
+                api_client.export_date_range(self._from_dt, self._to_dt)
+        except Exception as e:
+            self.error.emit(str(e))
+            return
+
+        # Ждём появления/обновления папки
+        while self._running:
+            time.sleep(2)
+            try:
+                for f in api_client.get_exports():
+                    folder = f["folder"]
+                    mtime  = f.get("mtime", 0)
+                    if folder not in snapshot or mtime != snapshot.get(folder, 0):
+                        self.found.emit(folder)
+                        return
+            except Exception:
+                pass
+
+    def stop(self):
+        self._running = False
 
 
 class _DataLoadWorker(QThread):
@@ -285,10 +331,11 @@ class HistoryController(QObject):
         dlg = QDialog(None)
         dlg.setWindowTitle("Скачивание")
         dlg.setMinimumWidth(400)
-        dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowType.WindowCloseButtonHint)
         layout = QVBoxLayout(dlg)
 
         status_label = QLabel("Подготовка...")
+        status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(status_label)
 
         progress = QProgressBar()
@@ -307,16 +354,11 @@ class HistoryController(QObject):
             }
         """)
         layout.addWidget(progress)
-
-        btn_close = QPushButton("Закрыть")
-        btn_close.setEnabled(False)
-        btn_close.clicked.connect(dlg.accept)
-        layout.addWidget(btn_close)
-
         dlg.show()
 
         worker = _DownloadWorker(url_path)
         self._download_worker = worker
+        self._download_dialog = dlg
         self._total_mb = 0.0
 
         def on_total(total_mb: float):
@@ -333,15 +375,17 @@ class HistoryController(QObject):
 
         def on_done(data: bytes):
             Path(save_path).write_bytes(data)
-            status_label.setText(f"Готово: {save_path}")
-            progress.setValue(progress.maximum() if progress.maximum() > 0 else 1)
-            progress.setRange(0, 1)
-            btn_close.setEnabled(True)
+            dlg.hide()
+            self._download_dialog = None
+            self._download_worker = None
+            QMessageBox.information(None, "Скачивание завершено",
+                                    f"{success_msg}\n\n{save_path}")
 
         def on_error(msg: str):
-            status_label.setText(f"Ошибка: {msg}")
-            progress.setRange(0, 1)
-            btn_close.setEnabled(True)
+            dlg.hide()
+            self._download_dialog = None
+            self._download_worker = None
+            QMessageBox.warning(None, "Ошибка скачивания", msg)
 
         worker.total.connect(on_total)
         worker.progress.connect(on_progress)
@@ -425,29 +469,50 @@ class HistoryController(QObject):
 
     def _export_selected(self):
         checkout = self._checkout_combo.currentData()
-        try:
-            if isinstance(checkout, dict):
-                checkout_id = checkout.get("id")
-                api_client.export_checkout(checkout_id)
-                QMessageBox.information(
-                    None, "Экспорт",
-                    f"Экспорт испытания #{checkout_id} запущен.\n"
-                    f"Файлы сохранятся в папку exports на сервере.",
-                )
-            else:
-                local_tz = _dt.datetime.now(_dt.timezone.utc).astimezone().tzinfo
-                from_dt = (self._dt_from.dateTime().toPyDateTime()
-                           .replace(tzinfo=local_tz).astimezone(_dt.timezone.utc))
-                to_dt   = (self._dt_to.dateTime().toPyDateTime()
-                           .replace(tzinfo=local_tz).astimezone(_dt.timezone.utc))
-                api_client.export_date_range(from_dt, to_dt)
-                QMessageBox.information(
-                    None, "Экспорт",
-                    f"Экспорт диапазона запущен.\n"
-                    f"Файлы сохранятся в папку exports на сервере.",
-                )
-        except Exception as e:
-            QMessageBox.warning(None, "Ошибка", f"Не удалось запустить экспорт:\n{e}")
+        from_dt = to_dt = None
+        if not isinstance(checkout, dict):
+            local_tz = _dt.datetime.now(_dt.timezone.utc).astimezone().tzinfo
+            from_dt = (self._dt_from.dateTime().toPyDateTime()
+                       .replace(tzinfo=local_tz).astimezone(_dt.timezone.utc))
+            to_dt   = (self._dt_to.dateTime().toPyDateTime()
+                       .replace(tzinfo=local_tz).astimezone(_dt.timezone.utc))
+
+        dlg = QDialog(None)
+        dlg.setWindowTitle("Экспорт")
+        dlg.setMinimumWidth(350)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowType.WindowCloseButtonHint)
+        layout = QVBoxLayout(dlg)
+        lbl = QLabel("Генерация XLSX / DOCX / PNG...")
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(lbl)
+        bar = QProgressBar()
+        bar.setRange(0, 0)
+        bar.setStyleSheet("""
+            QProgressBar { text-align: center; border: 1px solid #555; border-radius: 3px; background: #2b2b2b; }
+            QProgressBar::chunk { background-color: #2ecc71; border-radius: 3px; }
+        """)
+        layout.addWidget(bar)
+        dlg.show()
+
+        worker = _ExportWatchWorker(checkout, from_dt, to_dt)
+        self._export_worker = worker
+        self._export_dialog = dlg
+
+        def _on_found(name):
+            dlg.hide()
+            self._export_dialog = None
+            self._export_worker = None
+            QMessageBox.information(None, "Экспорт завершён", f"Файлы сохранены в папку:\n{name}")
+
+        def _on_error(msg):
+            dlg.hide()
+            self._export_dialog = None
+            self._export_worker = None
+            QMessageBox.warning(None, "Ошибка экспорта", f"Не удалось запустить экспорт:\n{msg}")
+
+        worker.found.connect(_on_found)
+        worker.error.connect(_on_error)
+        worker.start()
 
     def _refresh_exports(self):
         try:

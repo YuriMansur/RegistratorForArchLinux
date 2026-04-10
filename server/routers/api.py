@@ -117,7 +117,11 @@ async def list_exports() -> list[dict]:
     if not EXPORT_DIR.exists():
         return []
     return [
-        {"folder": folder.name, "files": sorted(f.name for f in folder.iterdir() if f.is_file())}
+        {
+            "folder": folder.name,
+            "files": sorted(f.name for f in folder.iterdir() if f.is_file()),
+            "mtime": max((f.stat().st_mtime for f in folder.iterdir() if f.is_file()), default=0),
+        }
         for folder in sorted(EXPORT_DIR.iterdir())
         if folder.is_dir()
     ]
