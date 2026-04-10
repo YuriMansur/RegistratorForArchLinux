@@ -309,11 +309,11 @@ class MainWindow(QMainWindow):
             db_text = f"🗄 ДБ: {round(db_mb / 1024, 1)} GB"
         else:
             db_text = f"🗄 ДБ: {db_mb} MB"
-        if db_mb >= 102400:       # > 100 GB
+        if db_mb >= 51200:        # > 50 GB
             db_color = "#e74c3c"
-        elif db_mb >= 40960:      # 40–100 GB
+        elif db_mb >= 25600:      # 25–50 GB
             db_color = "#f39c12"
-        else:                     # < 40 GB
+        else:                     # < 25 GB
             db_color = "#2ecc71"
         self._db_label.setText(db_text)
         self._db_label.setStyleSheet(f"color: {db_color};")

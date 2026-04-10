@@ -99,7 +99,7 @@ def export_by_date_range(from_dt: datetime, to_dt: datetime) -> None:
     try:
         ts = _fmt(to_dt)
         _write_xlsx(session_dir / f"data_{ts}.xlsx", rows)
-        _write_docx(session_dir / f"data_{ts}.docx", rows)
+        _write_docx(session_dir / f"data_{ts}.docx", rows, title=f"Данные {_to_local(from_dt)} — {_to_local(to_dt)}")
         _write_png_per_tag(session_dir, rows)
         log.info("Export range done: %d rows → %s", len(rows), session_dir.name)
     except Exception:
@@ -135,7 +135,7 @@ def _export(test_id: int, session_start: datetime, session_end: datetime) -> Non
     ts = _fmt(session_end)
     try:
         _write_xlsx(session_dir / f"session_{ts}.xlsx", rows)
-        _write_docx(session_dir / f"session_{ts}.docx", rows)
+        _write_docx(session_dir / f"session_{ts}.docx", rows, title=f"Испытание №{test_id}")
         _write_png_per_tag(session_dir, rows)
         log.info("Export done: %d rows → %s", len(rows), session_dir.name)
     except Exception:
@@ -160,7 +160,10 @@ def _pivot(rows: list):
         header = f"{name} [{units}]" if units else name
         if header not in headers:
             headers.append(header)
-        data[h.recorded_at][header] = h.value
+        try:
+            data[h.recorded_at][header] = f"{float(h.value):.2f}"
+        except (ValueError, TypeError):
+            data[h.recorded_at][header] = h.value if h.value is not None else ""
     return headers, data
 
 
@@ -185,11 +188,26 @@ def _write_xlsx(path: Path, rows: list) -> None:
     wb.save(path)
 
 
-def _write_docx(path: Path, rows: list) -> None:
+def _write_docx(path: Path, rows: list, title: str = "") -> None:
     from docx import Document
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    from docx.shared import Mm, Pt
+
     doc = Document()
-    doc.add_heading("Данные сессии OPC UA", 0)
-    doc.add_paragraph(f"Записей: {len(rows)}")
+
+    # А3 альбомная ориентация
+    section = doc.sections[0]
+    section.orientation = 1  # WD_ORIENT.LANDSCAPE
+    section.page_width  = Mm(420)
+    section.page_height = Mm(297)
+    section.left_margin   = Mm(10)
+    section.right_margin  = Mm(10)
+    section.top_margin    = Mm(10)
+    section.bottom_margin = Mm(10)
+
+    if title:
+        doc.add_heading(title, 0)
 
     headers, data = _pivot(rows)
     timestamps = sorted(data.keys())
@@ -209,6 +227,13 @@ def _write_docx(path: Path, rows: list) -> None:
         cells[0].text = _to_local(ts)
         for i, header in enumerate(headers, 1):
             cells[i].text = data[ts].get(header, "")
+
+    # Шрифт 10pt для всей таблицы
+    for row in table.rows:
+        for cell in row.cells:
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.font.size = Pt(9)
 
     doc.save(path)
 
@@ -240,17 +265,29 @@ def _write_png_per_tag(session_dir: Path, rows: list) -> None:
         if not tag_times:
             continue
 
-        width = max(24, len(tag_times) // 10)
-        fig, ax = plt.subplots(figsize=(width, 6))
-        ax.plot(tag_times, values, linewidth=1.2, color="steelblue")
-        ax.set_xlim(tag_times[0], tag_times[-1])
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S", tz=local_tz))
+        # Усреднение по 1-минутным интервалам
+        from collections import defaultdict
+        buckets: dict = defaultdict(list)
+        for dt, val in zip(tag_times, values):
+            minute = dt.replace(second=0, microsecond=0)
+            buckets[minute].append(val)
+        avg_times = sorted(buckets)
+        avg_values = [sum(buckets[m]) / len(buckets[m]) for m in avg_times]
+
+        # 1 дюйм на точку, но не более 32767px / 150dpi ≈ 218 дюймов
+        DPI = 150
+        width = max(24, min(len(avg_times), 32767 // DPI))
+        fig, ax = plt.subplots(figsize=(width, 6), dpi=DPI)
+        ax.plot(avg_times, avg_values, linewidth=1.2, color="steelblue",
+                marker="o", markersize=3)
+        ax.set_xlim(avg_times[0], avg_times[-1])
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=local_tz))
         ax.xaxis.set_major_locator(mdates.AutoDateLocator())
         fig.autofmt_xdate()
         ax.set_xlabel("Время")
         ax.set_ylabel(header)
-        t_start = tag_times[0].strftime("%d.%m.%Y %H:%M:%S")
-        t_end   = tag_times[-1].strftime("%d.%m.%Y %H:%M:%S")
+        t_start = avg_times[0].strftime("%d.%m.%Y %H:%M")
+        t_end   = avg_times[-1].strftime("%d.%m.%Y %H:%M")
         ax.set_title(f"{header}\n{t_start} — {t_end}", fontsize=11)
         ax.grid(True, linestyle="--", alpha=0.5)
         fig.tight_layout()

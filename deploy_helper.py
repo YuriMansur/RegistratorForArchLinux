@@ -42,7 +42,24 @@ for f in server_dir.rglob("*"):
 
 # Закрытие SFTP-сессии
 sftp.close()
-# Закрытие SSH-соединения
-ssh.close()
 # вывод в консоль об успехе завершения процесса
 print("all done")
+
+# ── Опциональный перезапуск сервиса ───────────────────────────────────────────
+
+answer = input("\nПерезапустить registrator.service? [y/N]: ").strip().lower()  # спрашиваем у пользователя
+
+if answer == "y":                                                                # если согласен
+    print("Перезапускаю registrator.service...")
+    _, out, err = ssh.exec_command("echo 1111 | sudo -S systemctl restart registrator")  # перезапускаем через sudo
+    out.read()                                                                   # ждём завершения команды
+    err.read()                                                                   # читаем stderr чтобы не завис
+    print("Готово. Проверяю статус...")
+    _, out, _ = ssh.exec_command("systemctl is-active registrator")             # проверяем статус сервиса
+    status = out.read().decode().strip()                                         # читаем ответ: active / failed
+    print(f"Статус: {status}")                                                   # выводим статус в консоль
+else:
+    print("Перезапуск пропущен.")                                               # пользователь отказался
+
+# Закрытие SSH-соединения
+ssh.close()
