@@ -5,7 +5,7 @@ import logging
 # threading — для таймеров переподключения и фоновых потоков экспорта.
 import threading
 # datetime — для фиксации времени начала и конца сессии испытания.
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 # OpcUaBackend — менеджер OPC UA соединений, через него всё общение с ПЛК.
 from protocol_backend.protocol_client.opcua.opcua_backend.opcua_backend import OpcUaBackend
 # Tags — класс с node_id всех тегов ПЛК 192.168.10.10.
@@ -86,6 +86,10 @@ class ServerManager:
         # ID текущего испытания в таблице checkouts.
         # Привязывает TagHistory записи к конкретному испытанию.
         self._current_test_id: int | None = None
+        # Время последнего обновления данных от ПЛК — используется watchdog'ом второго уровня.
+        self._last_data_at: datetime | None = None
+        # Таймер watchdog'а второго уровня — проверяет что данные обновляются регулярно.
+        self._data_watchdog_timer: threading.Timer | None = None
         # Регистрируем серверы в backend и подключаем callback'и.
         self._setup()
 
@@ -94,22 +98,77 @@ class ServerManager:
     def start(self):
         """Подключиться ко всем серверам из конфига.
         Вызывается при старте приложения из main.py (lifespan)."""
+        # При перезапуске сервера могут остаться незакрытые испытания (ended_at=NULL).
+        # Это случается если сервер упал или был перезапущен в середине теста.
+        # Закрываем их сразу, чтобы клиент не показывал "в процессе" бесконечно.
+        self._close_orphan_checkouts()
         # Проходим по всем зарегистрированным серверам и запускаем подключение.
         # connect_server создаёт worker thread и инициирует OPC UA соединение.
         for name in self._config:
             self._backend.connect_server(name)
+        # Запускаем watchdog второго уровня — следит что данные обновляются регулярно.
+        self._schedule_data_watchdog()
+
+    def _close_orphan_checkouts(self):
+        """Закрыть все незавершённые испытания оставшиеся от предыдущего запуска.
+        Вызывается при старте до подключения к ПЛК."""
+        from db.database import SessionLocal
+        from db.models import Checkout
+        db = SessionLocal()
+        try:
+            orphans = db.query(Checkout).filter(Checkout.ended_at.is_(None)).all()
+            if not orphans:
+                return
+            now = datetime.now(timezone.utc)
+            for checkout in orphans:
+                checkout.ended_at = now
+                log.warning(
+                    "Закрываю осиротевшее испытание id=%s started_at=%s (сервер был перезапущен)",
+                    checkout.id, checkout.started_at,
+                )
+            db.commit()
+        finally:
+            db.close()
 
     def stop(self):
         """Корректно остановить всё: отменить таймеры и отключить серверы.
         Вызывается при завершении приложения из main.py (lifespan)."""
         # Заглушаем логи asyncua — при остановке он генерирует много шума.
         logging.getLogger("asyncua").setLevel(logging.CRITICAL)
+        # Отменяем watchdog второго уровня.
+        if self._data_watchdog_timer:
+            self._data_watchdog_timer.cancel()
         # Отменяем все активные таймеры переподключения — иначе они попытаются
         # переподключиться уже после того как backend остановлен.
         for timer in self._timers.values():
             timer.cancel()
         # Отключаем все серверы и ждём завершения потоков (blocking внутри stop_all).
         self._backend.stop_all()
+
+    def _schedule_data_watchdog(self):
+        """Запланировать следующую проверку watchdog'а через 60 секунд."""
+        self._data_watchdog_timer = threading.Timer(60.0, self._data_watchdog_check)
+        self._data_watchdog_timer.daemon = True
+        self._data_watchdog_timer.start()
+
+    def _data_watchdog_check(self):
+        """Watchdog второго уровня: если данные не обновлялись 2+ минуты — реконнект.
+        Срабатывает когда asyncua завис после реконнекта (известный баг библиотеки)."""
+        now = datetime.now(timezone.utc)
+        # Если данные были хотя бы раз и последнее обновление > 2 минут назад — реконнект.
+        if self._last_data_at is not None:
+            age = now - self._last_data_at
+            if age > timedelta(minutes=2):
+                log.warning(
+                    "Data watchdog: no data for %.0f seconds — forcing reconnect",
+                    age.total_seconds()
+                )
+                # Принудительный реконнект всех серверов.
+                for name in self._config:
+                    self._backend.disconnect_server(name)
+                    self._schedule_reconnect(name, 3)
+        # Планируем следующую проверку.
+        self._schedule_data_watchdog()
 
     def write_tag(self, srv: str, node_id: str, value):
         """Записать значение в тег на ПЛК.
@@ -269,6 +328,8 @@ class ServerManager:
             else:
                 live_batch[tag_name] = (_serialize(val), now)
         live_data.update_batch(live_batch)
+        # Обновляем время последнего успешного получения данных для watchdog'а.
+        self._last_data_at = now
 
     def _handle_control(self, nid: str, val):
         """Обработать управляющий тег — запустить или завершить сессию испытания.
@@ -284,6 +345,25 @@ class ServerManager:
             # Создаём запись в таблице checkouts и получаем её ID.
             self._current_test_id = test_manager.start_test()
             log.info("Session started (test_id=%s)", self._current_test_id)
+
+        # inProcess=False пока сессия активна → неявный конец испытания.
+        # Это случается когда ПЛК сбросил inProcess раньше чем послал End=True,
+        # или подписка пропустила пульс End=True (он короче publishing interval 500мс).
+        elif nid == Tags.inProcess and not bool(val) and self._recording:
+            self._recording = False
+            session_end = datetime.now(timezone.utc)
+            test_manager.end_test(self._current_test_id)
+            log.warning(
+                "Session ended implicitly via inProcess=False (test_id=%s), exporting...",
+                self._current_test_id,
+            )
+            threading.Thread(
+                target=session_exporter.export_session,
+                args=(self._session_start, session_end, self._current_test_id),
+                daemon=True,
+            ).start()
+            self._session_start = None
+            self._current_test_id = None
 
         # End=True и сессия была запущена → КОНЕЦ испытания.
         elif nid == Tags.End and bool(val) and self._recording:

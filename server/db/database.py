@@ -16,7 +16,11 @@ async_engine = create_async_engine(
     echo=False,
     connect_args={"timeout": 30},
 )
-AsyncSessionLocal = async_sessionmaker(async_engine, expire_on_commit=False, class_=AsyncSession)
+AsyncSessionLocal = async_sessionmaker(async_engine, expire_on_commit = False, class_ = AsyncSession)
+
+# Выставляем WAL и на async engine — иначе при первом подключении через aiosqlite
+# прагма не будет установлена, если sync engine ещё не успел подключиться.
+event.listen(async_engine.sync_engine, "connect", _set_wal)
 
 # Sync engine — используется в фоновых задачах (session_exporter, usb_exporter)
 # и для создания таблиц при старте
@@ -25,7 +29,7 @@ sync_engine = create_engine(
     connect_args={"check_same_thread": False, "timeout": 30},
 )
 event.listen(sync_engine, "connect", _set_wal)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
+SessionLocal = sessionmaker(autocommit = False, autoflush = False, bind = sync_engine)
 
 
 class Base(DeclarativeBase):

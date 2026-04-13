@@ -565,6 +565,14 @@ class OpcUaBackend:
         # Подключаем on_watchdog_disconnect — когда watchdog обнаружил потерю связи.
         thread.on_poll_batch          = lambda name, batch: self._on_poll_batch(server_id, name, batch)
         thread.on_watchdog_disconnect = lambda: self._on_watchdog_disconnect(server_id)
+        # Результаты batch-чтения (read_multiple_nodes) прокидываем в on_data_updated,
+        # чтобы начальное чтение подписанных тегов при подключении дошло до client_manager.
+        # Без этого inProcess=True, уже выставленный на ПЛК до нашего подключения,
+        # никогда не попадёт в _handle_control и сессия не стартует.
+        thread.on_batch_read_completed = lambda results: [
+            self._on_data_updated(server_id, nid, val)
+            for nid, val in results.items() if val is not None
+        ]
 
 
     # Обработчик успешного подключения к серверу

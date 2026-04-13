@@ -113,7 +113,7 @@ def health():
 if __name__ == "__main__":
     # В production запускается через systemd → uvicorn main:app
     uvicorn.run(
-        "main   : app",
+        "main:app",
         host    = "0.0.0.0",
         port    = 8000,
         reload  = False,

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import String, DateTime, Integer, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 from db.database import Base
@@ -11,7 +11,7 @@ class TagValue(Base):
     tag_id: Mapped[str] = mapped_column(String(512), primary_key=True)
     tag_name: Mapped[str] = mapped_column(String(255), default="")
     value: Mapped[str] = mapped_column(String(1000), default="")
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class Tag(Base):
