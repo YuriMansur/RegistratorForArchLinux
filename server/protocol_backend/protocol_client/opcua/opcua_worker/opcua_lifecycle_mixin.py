@@ -230,9 +230,9 @@ class LifecycleMixin:
             for node_id in list(self.subscribed_tags.keys())
         }
 
-        # Сохраняем параметры poll loop'ов
+        # Сохраняем параметры poll loop'ов (включая sequential — иначе восстановится с дефолтом False)
         self._saved_polls = {
-            name: {"nodes": info["nodes"], "interval": info["interval"]}
+            name: {"nodes": info["nodes"], "interval": info["interval"], "sequential": info.get("sequential", False)}
             for name, info in self._poll_loops.items()
         }
 
@@ -256,12 +256,25 @@ class LifecycleMixin:
                 logger.info(f"Reconnect attempt {attempt}...")
 
                 try:
-                    # Очищаем старое соединение
+                    # Закрываем старый клиент чтобы остановить его внутренние задачи
+                    # (_monitor_server_loop, _renew_channel_loop). Без этого они остаются
+                    # висеть в фоне и через несколько минут выдают "Error while renewing session".
+                    # Ошибки игнорируем — соединение уже потеряно, нам важно только освободить ресурсы.
+                    old_client = self.client
                     self.client = None
                     self.subscription = None
                     self.handler = None
                     self._connected = False
                     self.subscribed_tags.clear()
+                    # Node-объекты в кэше привязаны к старому клиенту — очищаем,
+                    # иначе после реконнекта poll будет читать через них и получать ошибки.
+                    self._node_cache.clear()
+                    self._write_type_cache.clear()
+                    if old_client is not None:
+                        try:
+                            await asyncio.wait_for(old_client.disconnect(), timeout=5.0)
+                        except Exception:
+                            pass
 
                     await self.connect()
                     self._stats["reconnects"] += 1
@@ -278,7 +291,7 @@ class LifecycleMixin:
                     # Восстанавливаем poll loop'ы
                     for name, params in self._saved_polls.items():
                         try:
-                            await self.start_polling(name, params["nodes"], params["interval"])
+                            await self.start_polling(name, params["nodes"], params["interval"], params.get("sequential", False))
                             logger.info(f"Reconnect: restored poll '{name}'")
                         except Exception as e:
                             logger.error(f"Reconnect: failed to restore poll '{name}': {e}")

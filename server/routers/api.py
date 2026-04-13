@@ -116,20 +116,26 @@ async def export_history_range(
 async def list_exports() -> list[dict]:
     if not EXPORT_DIR.exists():
         return []
-    return [
-        {
+    result = []
+    for folder in sorted(EXPORT_DIR.iterdir()):
+        if not folder.is_dir():
+            continue
+        # Читаем содержимое один раз — избегаем race condition при двойном iterdir()
+        files = sorted(f for f in folder.iterdir() if f.is_file())
+        result.append({
             "folder": folder.name,
-            "files": sorted(f.name for f in folder.iterdir() if f.is_file()),
-            "mtime": max((f.stat().st_mtime for f in folder.iterdir() if f.is_file()), default=0),
-        }
-        for folder in sorted(EXPORT_DIR.iterdir())
-        if folder.is_dir()
-    ]
+            "files": [f.name for f in files],
+            "mtime": max((f.stat().st_mtime for f in files), default=0),
+        })
+    return result
 
 
 @router.get("/exports/{folder_name}/download")
 async def download_export_folder(folder_name: str):
-    folder = EXPORT_DIR / folder_name
+    folder = (EXPORT_DIR / folder_name).resolve()
+    # Защита от path traversal: убеждаемся что папка находится внутри EXPORT_DIR
+    if not str(folder).startswith(str(EXPORT_DIR.resolve())):
+        raise HTTPException(status_code=400, detail="Недопустимое имя папки")
     if not folder.exists() or not folder.is_dir():
         raise HTTPException(status_code=404, detail="Папка не найдена")
 
@@ -193,7 +199,7 @@ async def download_db():
         dst.close()
         src.close()
 
-    await asyncio.get_event_loop().run_in_executor(None, _backup)
+    await asyncio.get_running_loop().run_in_executor(None, _backup)
 
     size = tmp_path.stat().st_size
 

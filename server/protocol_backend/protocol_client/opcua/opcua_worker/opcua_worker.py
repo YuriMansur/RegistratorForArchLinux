@@ -233,6 +233,19 @@ class AsyncOpcUaWorker(SecurityMixin, LifecycleMixin, ExplorationMixin, ConfigMi
          - При ошибке ConnectionError.
         """
         try:
+            # Если уже есть старый клиент — закрываем его перед созданием нового.
+            # Иначе его внутренние задачи (_monitor_server_loop, _renew_channel_loop)
+            # останутся жить в фоне и будут генерировать "Error while renewing session".
+            if self.client is not None:
+                old = self.client
+                self.client = None
+                self._node_cache.clear()
+                self._write_type_cache.clear()
+                try:
+                    await asyncio.wait_for(old.disconnect(), timeout=5.0)
+                except Exception:
+                    pass
+
             # Создаём объект Client
                 # - url — адрес сервера ("opc.tcp://192.168.1.10:4840")
                 # - timeout — сколько ждать ответа от сервера (секунды)
