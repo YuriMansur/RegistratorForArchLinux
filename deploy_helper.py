@@ -40,6 +40,11 @@ for f in server_dir.rglob("*"):
     # Выводим в консоль имя загруженного файла для отслеживания прогресса
     print("ok", rel)
 
+# Деплоим backup_system.sh отдельно — он лежит в корне проекта, не в server/
+sftp.put("backup_system.sh", "/home/user/backup_system.sh")
+ssh.exec_command("chmod +x /home/user/backup_system.sh")[1].read()
+print("ok backup_system.sh")
+
 # Закрытие SFTP-сессии
 sftp.close()
 # вывод в консоль об успехе завершения процесса
