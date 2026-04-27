@@ -98,9 +98,10 @@ def export_by_date_range(from_dt: datetime, to_dt: datetime) -> None:
 
     try:
         ts = _fmt(to_dt)
-        _write_xlsx(session_dir / f"data_{ts}.xlsx", rows)
-        _write_docx(session_dir / f"data_{ts}.docx", rows, title=f"Данные {_to_local(from_dt)} — {_to_local(to_dt)}")
-        _write_png_per_tag(session_dir, rows)
+        headers, data = _pivot(rows)
+        _write_xlsx(session_dir / f"data_{ts}.xlsx", headers, data)
+        _write_docx(session_dir / f"data_{ts}.docx", headers, data, title=f"Данные {_to_local(from_dt)} — {_to_local(to_dt)}")
+        _write_png_per_tag(session_dir, headers, data)
         log.info("Export range done: %d rows → %s", len(rows), session_dir.name)
     except Exception:
         log.exception("Export range failed")
@@ -134,9 +135,10 @@ def _export(test_id: int, session_start: datetime, session_end: datetime) -> Non
 
     ts = _fmt(session_end)
     try:
-        _write_xlsx(session_dir / f"session_{ts}.xlsx", rows)
-        _write_docx(session_dir / f"session_{ts}.docx", rows, title=f"Испытание №{test_id}")
-        _write_png_per_tag(session_dir, rows)
+        headers, data = _pivot(rows)
+        _write_xlsx(session_dir / f"session_{ts}.xlsx", headers, data)
+        _write_docx(session_dir / f"session_{ts}.docx", headers, data, title=f"Испытание №{test_id}")
+        _write_png_per_tag(session_dir, headers, data)
         log.info("Export done: %d rows → %s", len(rows), session_dir.name)
     except Exception:
         log.exception("Export failed for test_id=%s", test_id)
@@ -167,18 +169,14 @@ def _pivot(rows: list):
     return headers, data
 
 
-def _write_xlsx(path: Path, rows: list) -> None:
+def _write_xlsx(path: Path, headers: list, data: dict) -> None:
     from openpyxl import Workbook
     wb = Workbook()
     ws = wb.active
     ws.title = "Сессия"
 
-    headers, data = _pivot(rows)
-
-    # Заголовок: Время + имя тега [единицы]
     ws.append(["Время"] + headers)
 
-    # Одна строка на каждый момент времени
     for ts in sorted(data.keys()):
         row = [_to_local(ts)]
         for header in headers:
@@ -188,17 +186,14 @@ def _write_xlsx(path: Path, rows: list) -> None:
     wb.save(path)
 
 
-def _write_docx(path: Path, rows: list, title: str = "") -> None:
+def _write_docx(path: Path, headers: list, data: dict, title: str = "") -> None:
     from docx import Document
-    from docx.oxml.ns import qn
-    from docx.oxml import OxmlElement
     from docx.shared import Mm, Pt
 
     doc = Document()
 
-    # А3 альбомная ориентация
     section = doc.sections[0]
-    section.orientation = 1  # WD_ORIENT.LANDSCAPE
+    section.orientation = 1
     section.page_width  = Mm(420)
     section.page_height = Mm(297)
     section.left_margin   = Mm(10)
@@ -209,45 +204,34 @@ def _write_docx(path: Path, rows: list, title: str = "") -> None:
     if title:
         doc.add_heading(title, 0)
 
-    headers, data = _pivot(rows)
     timestamps = sorted(data.keys())
 
-    table = doc.add_table(rows=1, cols=1 + len(headers))
+    table = doc.add_table(rows=1 + len(timestamps), cols=1 + len(headers))
     table.style = "Table Grid"
 
-    # Заголовок: Время + имя тега [единицы]
     hdr = table.rows[0].cells
     hdr[0].text = "Время"
     for i, header in enumerate(headers, 1):
         hdr[i].text = header
 
-    # Одна строка на каждый момент времени
-    for ts in timestamps:
-        cells = table.add_row().cells
+    for row_idx, ts in enumerate(timestamps, 1):
+        cells = table.rows[row_idx].cells
         cells[0].text = _to_local(ts)
         for i, header in enumerate(headers, 1):
             cells[i].text = data[ts].get(header, "")
 
-    # Шрифт 10pt для всей таблицы
-    for row in table.rows:
-        for cell in row.cells:
-            for para in cell.paragraphs:
-                for run in para.runs:
-                    run.font.size = Pt(9)
-
     doc.save(path)
 
 
-def _write_png_per_tag(session_dir: Path, rows: list) -> None:
-    headers, data = _pivot(rows)
+def _write_png_per_tag(session_dir: Path, headers: list, data: dict) -> None:
     if not headers or not data:
         return
 
+    from collections import defaultdict
     local_tz = datetime.now(timezone.utc).astimezone().tzinfo
     timestamps = sorted(data.keys())
 
     for header in headers:
-        # Берём только временны́е точки где есть значение этого тега
         tag_times = []
         values = []
         for ts in timestamps:
@@ -262,11 +246,10 @@ def _write_png_per_tag(session_dir: Path, rows: list) -> None:
             tag_times.append(dt.astimezone(local_tz))
             values.append(val)
 
-        if not tag_times:
+        if len(tag_times) < 2:
             continue
 
         # Усреднение по 1-минутным интервалам
-        from collections import defaultdict
         buckets: dict = defaultdict(list)
         for dt, val in zip(tag_times, values):
             minute = dt.replace(second=0, microsecond=0)
@@ -274,7 +257,9 @@ def _write_png_per_tag(session_dir: Path, rows: list) -> None:
         avg_times = sorted(buckets)
         avg_values = [sum(buckets[m]) / len(buckets[m]) for m in avg_times]
 
-        # 1 дюйм на точку, но не более 32767px / 150dpi ≈ 218 дюймов
+        if len(avg_times) < 2:
+            continue
+
         DPI = 150
         width = max(24, min(len(avg_times), 32767 // DPI))
         fig, ax = plt.subplots(figsize=(width, 6), dpi=DPI)
@@ -292,7 +277,6 @@ def _write_png_per_tag(session_dir: Path, rows: list) -> None:
         ax.grid(True, linestyle="--", alpha=0.5)
         fig.tight_layout()
 
-        # имя файла: безопасное имя тега (убираем спецсимволы)
         safe_name = header.replace("/", "_").replace(" ", "_").replace("[", "").replace("]", "")
         fig.savefig(session_dir / f"trend_{safe_name}.png", dpi=150)
         plt.close(fig)
