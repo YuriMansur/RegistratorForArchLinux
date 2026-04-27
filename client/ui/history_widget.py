@@ -107,8 +107,9 @@ class _ExportWatchWorker(QThread):
             self.error.emit(str(e))
             return
 
-        # Ждём появления/обновления папки
-        while self._running:
+        # Ждём появления/обновления папки (максимум 120 секунд)
+        deadline = time.time() + 120
+        while self._running and time.time() < deadline:
             time.sleep(2)
             try:
                 for f in api_client.get_exports():
@@ -119,6 +120,8 @@ class _ExportWatchWorker(QThread):
                         return
             except Exception:
                 pass
+        # Таймаут или остановка — пустой экспорт (нет данных за период)
+        self.error.emit("Нет данных для экспорта за выбранный период")
 
     def stop(self):
         self._running = False
@@ -476,6 +479,19 @@ class HistoryController(QObject):
                        .replace(tzinfo=local_tz).astimezone(_dt.timezone.utc))
             to_dt   = (self._dt_to.dateTime().toPyDateTime()
                        .replace(tzinfo=local_tz).astimezone(_dt.timezone.utc))
+
+        # Проверяем есть ли данные перед запуском экспорта
+        try:
+            if isinstance(checkout, dict):
+                rows = api_client.get_checkout_history(checkout["id"])
+                count = len(rows)
+            else:
+                count = api_client.get_history_range_count(from_dt, to_dt)
+            if count == 0:
+                QMessageBox.warning(None, "Нет данных", "За выбранный период нет записей для экспорта.")
+                return
+        except Exception:
+            pass
 
         dlg = QDialog(None)
         dlg.setWindowTitle("Экспорт")
