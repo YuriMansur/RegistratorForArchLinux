@@ -4,6 +4,9 @@ setlocal enabledelayedexpansion
 rem === Create client/.venv on this machine using installed Python, then install deps. ===
 rem === Run once after `git clone`. Idempotent: safe to re-run to refresh dependencies. ===
 
+rem Required Python major.minor (must match what client/.venv was built against).
+set "PY_TAG=3.12"
+
 set "ROOT_DIR=%~dp0"
 set "CLIENT_DIR=%ROOT_DIR%client"
 set "VENV=%CLIENT_DIR%\.venv"
@@ -15,29 +18,31 @@ if not exist "%REQ%" (
     exit /b 1
 )
 
-rem ---- Find a Python interpreter on this machine ----
+rem ---- Find Python %PY_TAG%.x on this machine ----
 set "PY_CMD="
 
-rem 1) py launcher with latest Python 3.x
+rem 1) py launcher with exact -X.Y (most reliable)
 where py >nul 2>&1
 if not errorlevel 1 (
-    py -3 -c "import sys" >nul 2>&1
-    if not errorlevel 1 set "PY_CMD=py -3"
+    py -%PY_TAG% -c "import sys" >nul 2>&1
+    if not errorlevel 1 set "PY_CMD=py -%PY_TAG%"
 )
 
-rem 2) `python` from PATH
+rem 2) `python` from PATH, only if major.minor matches
 if not defined PY_CMD (
     where python >nul 2>&1
     if not errorlevel 1 (
-        python -c "import sys" >nul 2>&1
-        if not errorlevel 1 set "PY_CMD=python"
+        for /f "delims=" %%v in ('python -c "import sys; print('{}.{}'.format(sys.version_info[0],sys.version_info[1]))" 2^>nul') do (
+            if "%%v"=="%PY_TAG%" set "PY_CMD=python"
+        )
     )
 )
 
 if not defined PY_CMD (
     echo.
-    echo [ERROR] No working Python found on this machine.
-    echo Install Python 3.11+ from https://www.python.org/downloads/
+    echo [ERROR] Python %PY_TAG% not found on this machine.
+    echo This project requires Python %PY_TAG%.x.
+    echo Install it from https://www.python.org/downloads/
     echo Make sure to check "Add Python to PATH" during install.
     pause
     exit /b 1
