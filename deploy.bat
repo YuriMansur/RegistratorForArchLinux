@@ -1,3 +1,3 @@
 @echo off
-python "%~dp0deploy_helper.py"
+"%~dp0client\.venv\Scripts\python.exe" "%~dp0scripts\deploy_helper.py"
 pause

@@ -1,3 +1,3 @@
 @echo off
-python "%~dp0download_backup.py"
+"%~dp0client\.venv\Scripts\python.exe" "%~dp0scripts\download_backup.py"
 pause
