@@ -2,9 +2,28 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QTabWidget,
 )
-from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtCore import QTimer, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
 import api_client
+
+
+class _PollWorker(QThread):
+    """Универсальный фоновый поток для одного HTTP-опроса.
+
+    Принимает функцию fn, вызывает её в фоне, возвращает результат через сигнал.
+    При ошибке (нет связи) возвращает None — UI не блокируется.
+    """
+    result = pyqtSignal(object)
+
+    def __init__(self, fn):
+        super().__init__()
+        self._fn = fn
+
+    def run(self):
+        try:
+            self.result.emit(self._fn())
+        except Exception:
+            self.result.emit(None)
 from ui.settings_dialog import SettingsDialog
 from ui.tags_widget import TagsWidget
 from ui.history_widget import HistoryController
@@ -191,29 +210,30 @@ class MainWindow(QMainWindow):
         self.btn_settings.clicked.connect(self._on_settings)
 
 
-    #  Метод для проверки соединения с сервером и обновления статуса подключения
     def _check_connection(self):
-        """
-        Проверка соединения с сервером и обновление статуса подключения: 
-        изменение цвета индикатора и текста статуса в зависимости от доступности сервера
-        """
-        # Если сервер доступен
-        if api_client.health_check():
-            # Установить зеленый цвет индикатора
+        """Запустить проверку соединения в фоновом потоке."""
+        w = _PollWorker(api_client.health_check)
+        w.result.connect(self._on_connection_result)
+        w.start()
+        self._conn_worker = w
+
+    def _on_connection_result(self, ok):
+        if ok:
             self._conn_dot.setStyleSheet(_DOT_GREEN)
-            # Обновление текста статуса подключения на "Подключено к серверу"
             self._conn_label.setText("Подключено к серверу")
-        else: # Если сервер недоступен
-            # Установить красный цвет индикатора
+        else:
             self._conn_dot.setStyleSheet(_DOT_RED)
-            # Обновление текста статуса подключения на "Сервер недоступен"
             self._conn_label.setText("Сервер недоступен")
 
-    # Метод для опроса USB устройств и обновления статуса USB накопителя
     def _poll_experiment(self):
-        try:
-            tags = api_client.get_tags()
-        except Exception:
+        """Запустить опрос статуса испытания в фоновом потоке."""
+        w = _PollWorker(api_client.get_tags)
+        w.result.connect(self._on_experiment_result)
+        w.start()
+        self._exp_worker = w
+
+    def _on_experiment_result(self, tags):
+        if tags is None:
             return
         tag_map = {t["tag_name"]: t["value"] for t in tags}
         def _bool(name):
@@ -231,25 +251,20 @@ class MainWindow(QMainWindow):
             self._exp_label.setStyleSheet("color: #888888; font-weight: bold;")
 
     def _poll_usb(self):
-        """
-        Опрос USB устройств и обновление статуса USB накопителя:
-        получение данных с сервера и отображение информации о подключенных устройствах и статусе экспорта
-        """
-        # Попытка получения данных о USB устройствах и статусе экспорта с сервера через API клиента
-        try:
-            # Получение списка подключенных USB устройств и статуса экспорта с сервера через API клиента
-            devices = api_client.get_usb_devices()
-            # Получение статуса экспорта USB накопителя с сервера через API клиента
-            export_status = api_client.get_usb_export_status()
-        # Если при получении данных произошла ошибка (например, сервер недоступен), установить серый цвет индикатора и текст статуса на "—"
-        except Exception:
-            # Установить серый цвет индикатора USB, чтобы показать, что данные недоступны
+        """Запустить опрос USB устройств в фоновом потоке."""
+        def _fetch():
+            return api_client.get_usb_devices(), api_client.get_usb_export_status()
+        w = _PollWorker(_fetch)
+        w.result.connect(self._on_usb_result)
+        w.start()
+        self._usb_worker = w
+
+    def _on_usb_result(self, data):
+        if data is None:
             self._usb_dot.setStyleSheet(_DOT_GRAY)
-            # Обновление текста статуса USB накопителя на "USB Накопитель: —", чтобы показать, что данные недоступны
             self._usb_status_label.setText("USB Накопитель: —")
             return
-
-        # Словари для отображения текста статуса и цвета индикатора в зависимости от статуса экспорта
+        devices, export_status = data
         _STATUS_LABELS = {
             "idle":    "",
             "waiting": " | Ожидает монтирования...",
@@ -257,7 +272,6 @@ class MainWindow(QMainWindow):
             "done":    " | Готов",
             "error":   " | Ошибка записи",
         }
-        # Словарь для отображения цвета индикатора в зависимости от статуса экспорта
         _STATUS_DOTS = {
             "idle":    _DOT_GREEN,
             "waiting": _DOT_YELLOW,
@@ -265,31 +279,26 @@ class MainWindow(QMainWindow):
             "done":    _DOT_GREEN,
             "error":   _DOT_RED,
         }
-        # Получение текста статуса для отображения в зависимости от статуса экспорта, используя словарь _STATUS_LABELS
-        status_text = _STATUS_LABELS.get(export_status, "")
-
-        # Если нет подключенных устройств, установить серый цвет индикатора и текст статуса на "USB Накопитель: Не подключен"
         if not devices:
-            # Установить серый цвет индикатора USB, чтобы показать, что нет подключенных устройств
             self._usb_dot.setStyleSheet(_DOT_GRAY)
-            # Обновление текста статуса USB накопителя на "USB Накопитель: Не подключен", чтобы показать, что нет подключенных устройств
             self._usb_status_label.setText("USB Накопитель: Не подключен")
-        else: 
-            # Если есть подключенные устройства, создать строку с именами устройств и обновить цвет индикатора 
-            # и текст статуса в зависимости от статуса экспорта
+        else:
             names = ", ".join(
                 f"{d.get('vendor', '')} {d.get('model', '')} ({d.get('node', '')})".strip()
                 for d in devices
             )
-            # Установить цвет индикатора USB в зависимости от статуса экспорта, используя словарь _STATUS_DOTS
             self._usb_dot.setStyleSheet(_STATUS_DOTS.get(export_status, _DOT_GREEN))
-            # Обновление текста статуса USB накопителя на "USB Накопитель: {имена устройств}{текст статуса}",
-            # чтобы показать информацию о подключенных устройствах и статусе экспорта
-            self._usb_status_label.setText(f"USB Накопитель: {names}{status_text}")
+            self._usb_status_label.setText(f"USB Накопитель: {names}{_STATUS_LABELS.get(export_status, '')}")
 
 
     def _poll_disk(self):
-        status = api_client.get_disk_status()
+        """Запустить опрос диска в фоновом потоке."""
+        w = _PollWorker(api_client.get_disk_status)
+        w.result.connect(self._on_disk_result)
+        w.start()
+        self._disk_worker = w
+
+    def _on_disk_result(self, status):
         if status is None:
             self._disk_label.setText("💾 Свободно: —")
             self._disk_label.setStyleSheet("")

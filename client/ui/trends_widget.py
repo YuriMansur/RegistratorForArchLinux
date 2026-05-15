@@ -246,8 +246,8 @@ class TrendsWidget(QWidget):
         self._buf_timer.timeout.connect(self._buf_tick)
         self._buf_timer.start(2000)
         self._setup_ui()
-        self._load_tags()
-        self._load_checkouts()
+        QTimer.singleShot(500, self._load_tags)
+        QTimer.singleShot(500, self._load_checkouts)
 
 
     # ── UI ────────────────────────────────────────────────────────────────────

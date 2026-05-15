@@ -12,6 +12,9 @@
 """
 
 import uvicorn
+import logging
+import logging.handlers
+import pathlib
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,6 +41,16 @@ from services.disk_monitor import disk_monitor_loop
 # Создаём все таблицы БД при старте если они ещё не существуют.
 # При изменении схемы моделей — таблицы нужно пересоздавать вручную.
 Base.metadata.create_all(bind=sync_engine)
+
+# Настройка файлового лога для OPC UA — ротация 5 МБ, хранить 5 файлов
+_log_dir = pathlib.Path(__file__).parent / "logs"
+_log_dir.mkdir(exist_ok=True)
+_file_handler = logging.handlers.RotatingFileHandler(
+    _log_dir / "opcua.log", maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
+)
+_file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+logging.getLogger("protocol_backend").setLevel(logging.DEBUG)
+logging.getLogger("protocol_backend").addHandler(_file_handler)
 
 # Глобальная ссылка на менеджер серверов — нужна для graceful shutdown
 _server_manager: ServerManager | None = None

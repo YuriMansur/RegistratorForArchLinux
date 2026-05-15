@@ -105,6 +105,12 @@ class _ProgressDialog(QDialog):
         QMessageBox.warning(self, "Ошибка", f"Не удалось скачать:\n{msg}")
         self.reject()
 
+    def closeEvent(self, event):
+        """Остановить фоновый поток при закрытии диалога."""
+        if self._worker and self._worker.isRunning():
+            self._worker.wait(3000)
+        super().closeEvent(event)
+
 
 def DbDownloadDialog(parent=None):
     """Открывает файловый диалог, затем диалог прогресса."""

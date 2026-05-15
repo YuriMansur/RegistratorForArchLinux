@@ -41,7 +41,23 @@ _SERVERS = [
         "polls"             : [
             # arrays — группа опроса всех данных испытания (ForUra).
             # sequential=True: читать узлы последовательно, чтобы не перегружать ПЛК.
-            {"name": "arrays", "nodes": [Tags.values], "interval": 1.0, "sequential": False},
+            {"name": "arrays", "nodes": [Tags.rDTAT,
+                                         Tags.rDavDDA,
+                                         Tags.rDavDDB,
+                                         Tags.rDavDDB_kPa,
+                                         Tags.rDavDDN1,
+                                         Tags.rDavDDN2,
+                                         Tags.rDavDDP1,
+                                         Tags.rDavDDP1_1,
+                                         Tags.rDavDDP2,
+                                         Tags.rDavReserve1,
+                                         Tags.rDavReserve2,
+                                         Tags.rTempDT1,
+                                         Tags.rTempDT2,
+                                         Tags.rTempDTB,
+                                         Tags.inProcess,
+                                         Tags.End],
+                                        "interval": 1.0, "sequential": False},
         ],
     },
 ]
@@ -314,6 +330,7 @@ class ServerManager:
             nid = self._normalize_nid(nid)
             tag_name = _NODE_NAMES.get(nid, nid)
             if nid in _CONTROL_TAGS:
+                self._handle_control(nid, val)
                 continue
             tag_writer.write_tag(
                 tag_id=nid, value=val, tag_name=tag_name,
@@ -328,6 +345,8 @@ class ServerManager:
             else:
                 live_batch[tag_name] = (_serialize(val), now)
         live_data.update_batch(live_batch)
+        if live_batch:
+            log.debug("[%s] %s", srv, {k: v[0] for k, v in live_batch.items()})
         # Обновляем время последнего успешного получения данных для watchdog'а.
         self._last_data_at = now
 

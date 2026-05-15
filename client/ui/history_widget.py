@@ -208,12 +208,12 @@ class HistoryController(QObject):
         self.data_widget    = self._build_data_widget()
         self.exports_widget = self._build_exports_widget()
 
-        self._refresh_checkouts()
-        self._refresh_exports()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh_exports)
         self._timer.timeout.connect(self._refresh_checkouts)
         self._timer.start(5000)
+        QTimer.singleShot(500, self._refresh_checkouts)
+        QTimer.singleShot(500, self._refresh_exports)
 
     # ── Построение виджетов ────────────────────────────────────────────────────
 
@@ -403,10 +403,23 @@ class HistoryController(QObject):
         if line_edit and line_edit.hasFocus():
             return
 
-        try:
-            self._checkouts = api_client.get_checkouts()
-        except Exception:
+        class _W(QThread):
+            done = pyqtSignal(list)
+            def run(self):
+                try:
+                    self.done.emit(api_client.get_checkouts())
+                except Exception:
+                    self.done.emit([])
+
+        w = _W()
+        w.done.connect(self._apply_checkouts)
+        w.start()
+        self._checkouts_worker = w
+
+    def _apply_checkouts(self, checkouts):
+        if not checkouts:
             return
+        self._checkouts = checkouts
 
         prev_id = self._checkout_combo.currentData()
 
@@ -531,9 +544,21 @@ class HistoryController(QObject):
         worker.start()
 
     def _refresh_exports(self):
-        try:
-            folders = api_client.get_exports()
-        except Exception:
+        class _W(QThread):
+            done = pyqtSignal(list)
+            def run(self):
+                try:
+                    self.done.emit(api_client.get_exports())
+                except Exception:
+                    self.done.emit([])
+
+        w = _W()
+        w.done.connect(self._apply_exports)
+        w.start()
+        self._exports_worker = w
+
+    def _apply_exports(self, folders):
+        if not folders:
             return
 
         expanded = set()
