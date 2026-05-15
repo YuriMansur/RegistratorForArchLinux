@@ -17,7 +17,7 @@ ssh.connect("192.168.10.222", username = "user", pkey = key)
 sftp = ssh.open_sftp()
 
 # Путь к локальной папке с файлами сервера
-server_dir = Path("server")
+server_dir = Path(__file__).parent.parent / "server"
 
 # Проходим по всем файлам в папке сервера и загружаем их на удаленный сервер, сохраняя структуру папок
 for f in server_dir.rglob("*"):
@@ -40,8 +40,8 @@ for f in server_dir.rglob("*"):
     # Выводим в консоль имя загруженного файла для отслеживания прогресса
     print("ok", rel)
 
-# Деплоим backup_system.sh отдельно — он лежит в корне проекта, не в server/
-sftp.put("backup_system.sh", "/home/user/backup_system.sh")
+# Деплоим backup_system.sh — лежит рядом со скриптом в scripts/
+sftp.put(str(Path(__file__).parent / "backup_system.sh"), "/home/user/backup_system.sh")
 ssh.exec_command("chmod +x /home/user/backup_system.sh")[1].read()
 print("ok backup_system.sh")
 
