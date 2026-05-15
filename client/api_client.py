@@ -6,8 +6,8 @@ import requests
 from config import get_base_url
 
 # Таймаут по умолчанию для большинства запросов в секундах.
-# При превышении requests.exceptions.Timeout → обрабатывается вызывающим кодом.
-TIMEOUT = 5
+# 2с — компромисс: не блокируем UI долго при недоступном сервере.
+TIMEOUT = 2
 
 
 def _url(path: str) -> str:

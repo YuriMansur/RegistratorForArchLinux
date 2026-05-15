@@ -157,10 +157,18 @@ class BackupsWidget(QWidget):
         self._sys_files: list[dict] = []
         self._list_worker: _ListWorker | None = None
         self._setup_ui()
-        self._refresh()
         self._auto_timer = QTimer(self)
         self._auto_timer.timeout.connect(self._refresh)
         self._auto_timer.start(30_000)  # обновление каждые 30 секунд
+        # Откладываем первый запрос на 3с чтобы не тормозить запуск приложения
+        QTimer.singleShot(3000, self._refresh)
+
+    def closeEvent(self, event):
+        """Остановить таймер и дождаться завершения фонового потока при закрытии."""
+        self._auto_timer.stop()
+        if self._list_worker and self._list_worker.isRunning():
+            self._list_worker.wait(3000)
+        super().closeEvent(event)
 
     def _setup_ui(self):
         root = QVBoxLayout(self)

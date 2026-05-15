@@ -1,11 +1,23 @@
-import requests
 from datetime import datetime, timezone
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView,
 )
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, QThread, pyqtSignal
 import api_client
+
+
+class _TagsWorker(QThread):
+    done = pyqtSignal(list)
+
+    def run(self):
+        try:
+            tags = api_client.get_live_tags()
+            if not tags:
+                tags = api_client.get_tags()
+            self.done.emit(tags)
+        except Exception:
+            self.done.emit([])
 
 
 def _utc_to_local(utc_str: str) -> str:
@@ -42,21 +54,27 @@ class TagsWidget(QWidget):
         layout.addWidget(self.status_label)
 
     def _start_polling(self):
+        self._worker: _TagsWorker | None = None
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._load)
         self._timer.start(_POLL_INTERVAL_MS)
         self._load()
 
     def _load(self):
-        try:
-            tags = api_client.get_live_tags()
-            if not tags:
-                tags = api_client.get_tags()
-            self._fill(tags)
-            visible = [t for t in tags if t["tag_name"] not in _SKIP_TAGS]
-            self.status_label.setText(f"Тегов: {len(visible)}")
-        except requests.RequestException as e:
-            self.status_label.setText(f"Ошибка: {e}")
+        # Не запускаем новый запрос если предыдущий ещё не завершился
+        if self._worker and self._worker.isRunning():
+            return
+        self._worker = _TagsWorker()
+        self._worker.done.connect(self._on_tags)
+        self._worker.start()
+
+    def _on_tags(self, tags: list):
+        if not tags:
+            self.status_label.setText("Нет данных")
+            return
+        self._fill(tags)
+        visible = [t for t in tags if t["tag_name"] not in _SKIP_TAGS]
+        self.status_label.setText(f"Тегов: {len(visible)}")
 
     def _fill(self, tags: list[dict]):
         # Берём общий timestamp из первого тега
