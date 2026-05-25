@@ -45,8 +45,25 @@ for i, b in enumerate(backups):
 # выводиТ индекс и полный путь к файлу             
     print(f"  [{i}] {b}")                  
 
-idx = input(f"\nВыберите номер [0 = последний]: ").strip()  # спрашиваем номер у пользователя
-idx = int(idx) if idx else 0                      # если ввод пустой — берём 0 (самый свежий)
+idx_raw = input(f"\nВыберите номер [0 = последний]: ").strip()  # спрашиваем номер у пользователя
+# Пустой ввод трактуем как 0 (самый свежий). Иначе — проверяем что это число и в диапазоне.
+if not idx_raw:
+    idx = 0
+else:
+    try:
+        idx = int(idx_raw)
+    except ValueError:
+        # Пользователь ввёл что-то не цифрами — выходим понятным сообщением, а не traceback'ом.
+        print(f"Ошибка: '{idx_raw}' не число.")
+        sftp.close()
+        ssh.close()
+        sys.exit(1)
+    if idx < 0 or idx >= len(backups):
+        # Индекс вне диапазона списка — выходим с понятным сообщением вместо IndexError.
+        print(f"Ошибка: номер должен быть от 0 до {len(backups) - 1}.")
+        sftp.close()
+        ssh.close()
+        sys.exit(1)
 
 remote_path = backups[idx]                        # полный путь к выбранному файлу на сервере
 filename = remote_path.split("/")[-1]             # извлекаем только имя файла из пути
@@ -61,7 +78,8 @@ print(f"\nСкачиваю {filename} → {local_path} ...")  # информир
 
 def progress(transferred: int, total: int) -> None:
     """Callback для sftp.get() — вызывается при каждом полученном блоке данных."""
-    pct = transferred / total * 100                                      # вычисляем процент выполнения
+    # total=0 защищает от ZeroDivisionError на (теоретически) пустом файле бэкапа.
+    pct = (transferred / total * 100) if total else 0
     print(f"\r  {pct:.1f}%  ({transferred // 1024 // 1024} MB / {total // 1024 // 1024} MB)",  # выводим прогресс в одну строку
           end="", flush=True)                                            # \r перезаписывает строку, flush — сразу в терминал
 

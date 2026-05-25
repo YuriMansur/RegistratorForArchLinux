@@ -18,7 +18,18 @@ if answer != "YES":
 
 print("Удаляю папки экспортов...")
 _, out, err = ssh.exec_command("rm -rf /home/user/registrator/exports/checkout_*")
+# Всегда дренируем оба пайпа — иначе paramiko может зависнуть, если в stderr что-то осталось.
 out.read()
+err_text = err.read().decode().strip()
+# exit_status — реальный код возврата команды на сервере (0 = успех).
+exit_code = out.channel.recv_exit_status()
+
+if exit_code != 0 or err_text:
+    # Реальная ошибка — не врём пользователю что всё удалилось.
+    print(f"Ошибка (exit={exit_code}): {err_text or '(нет stderr)'}")
+    ssh.close()
+    exit(1)
+
 print("Экспорты удалены.")
 
 ssh.close()
