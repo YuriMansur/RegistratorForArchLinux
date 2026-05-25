@@ -11,6 +11,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
+# signals — маппинг технического имени тега в подпись и единицу измерения.
+from services import signals
+
 EXPORT_DIR = Path("/home/user/registrator/exports")
 
 # Теги, которые не попадают в экспорт (управляющие, служебные и т.д.)
@@ -156,10 +159,15 @@ def _pivot(rows: list):
     data = defaultdict(dict)
     for h, tag in rows:
         name  = tag.name  if tag else str(h.tag_id)
-        if name in _EXCLUDE_TAG_NAMES:
+        # Технические управляющие теги исключаем по короткому имени до перевода в подпись.
+        # Для массивов вида "inProcess[0]" сравниваем по базовому имени.
+        base = name.split("[", 1)[0]
+        if base in _EXCLUDE_TAG_NAMES:
             continue
-        units = tag.units if tag else ""
-        header = f"{name} [{units}]" if units else name
+        # Подпись и единица — из signals.json (фоллбек на техническое имя, если тег не описан).
+        label = signals.get_label(name)
+        units = signals.get_unit(name)
+        header = f"{label} [{units}]" if units else label
         if header not in headers:
             headers.append(header)
         try:

@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QTimer, QThread, pyqtSignal
 import api_client
+import signals
 
 
 class _TagsWorker(QThread):
@@ -42,7 +43,7 @@ class TagsWidget(QWidget):
         layout.addWidget(QLabel("Последние данные"))
 
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Имя", "Значение", "Обновлено"])
+        self.table.setHorizontalHeaderLabels(["Сигнал", "Значение", "Обновлено"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
@@ -86,7 +87,8 @@ class TagsWidget(QWidget):
 
         self.table.setRowCount(0)
         for tag in tags:
-            if tag["tag_name"] in _SKIP_TAGS:
+            name = tag["tag_name"]
+            if name in _SKIP_TAGS:
                 continue
             value_str = tag["value"]
             if value_str.startswith("["):
@@ -94,16 +96,20 @@ class TagsWidget(QWidget):
                     import ast
                     items = ast.literal_eval(value_str)
                     for i, item in enumerate(items):
+                        # signals.get_display сам формирует "Подпись[i] [ед.изм.]" для массивов.
+                        display = signals.get_display(f"{name}[{i}]")
                         row = self.table.rowCount()
                         self.table.insertRow(row)
-                        self.table.setItem(row, 0, QTableWidgetItem(f"{tag['tag_name']}[{i}]"))
+                        self.table.setItem(row, 0, QTableWidgetItem(display))
                         self.table.setItem(row, 1, QTableWidgetItem(str(item)))
                         self.table.setItem(row, 2, QTableWidgetItem(ts))
                     continue
                 except Exception:
                     pass
+            # Скалярный тег — обычная подпись из signals.json.
+            display = signals.get_display(name)
             row = self.table.rowCount()
             self.table.insertRow(row)
-            self.table.setItem(row, 0, QTableWidgetItem(tag["tag_name"]))
+            self.table.setItem(row, 0, QTableWidgetItem(display))
             self.table.setItem(row, 1, QTableWidgetItem(value_str))
             self.table.setItem(row, 2, QTableWidgetItem(ts))

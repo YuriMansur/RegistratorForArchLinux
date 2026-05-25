@@ -17,6 +17,7 @@ from services.tag_service import TagRepository, TagService
 from services.checkout_service import CheckoutRepository, CheckoutService
 from services.history_service import HistoryRepository, HistoryService
 from services import live_data
+from services import signals as signals_service
 
 router = APIRouter()
 
@@ -31,6 +32,15 @@ async def get_latest_tags(db: AsyncSession = Depends(get_db)):
 @router.get("/tags/live")
 async def get_live_tags() -> list[dict]:
     return live_data.get_all()
+
+
+# ── Signals (подписи и единицы измерения) ─────────────────────────────────────
+
+@router.get("/signals")
+async def get_signals() -> dict[str, dict]:
+    """Маппинг {техническое имя → {label, unit}} из server/config/signals.json.
+    Клиент кэширует ответ на старте и использует для подписей в графиках/таблицах/экспортах."""
+    return signals_service.get_all()
 
 
 # ── Checkouts ─────────────────────────────────────────────────────────────────

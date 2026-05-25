@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, QDateTime, QFileInfo, QObject, QThread, pyqtSignal
 import api_client
+import signals
 from ui.datetime_picker import DateTimePicker
 
 
@@ -165,7 +166,9 @@ def _pivot_rows(rows: list[dict]) -> tuple[list[str], list[list[str]]]:
 
 def _fill_pivoted(table: QTableWidget, rows: list[dict]) -> None:
     tags, pivoted = _pivot_rows(rows)
-    cols = ["Время"] + tags
+    # Заголовки колонок — подписи из signals.json. Сами данные индексируются
+    # по техническим именам (tags), потому переводим только отображение.
+    cols = ["Время"] + [signals.get_display(t) for t in tags]
 
     v_scroll = table.verticalScrollBar().value()
     h_scroll = table.horizontalScrollBar().value()

@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
 import api_client
+import signals as signals_cache
 
 
 class _PollWorker(QThread):
@@ -87,6 +88,10 @@ class MainWindow(QMainWindow):
         # Вызов метода для проверки соединения с сервером при инициализации главного окна,
         # чтобы сразу отобразить статус подключения при запуске приложения
         self._check_connection()
+        # Подгружаем подписи тегов с сервера в фоне — если сервер недоступен,
+        # signals.get_label() будет возвращать технические имена (фоллбек встроен).
+        self._signals_worker = _PollWorker(signals_cache.refresh)
+        self._signals_worker.start()
 
     # Метод для построения пользовательского интерфейса
     def _build_ui(self):

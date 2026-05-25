@@ -12,6 +12,7 @@ from PyQt6.QtCore import Qt, QDateTime, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
 
 import api_client
+import signals
 from ui.datetime_picker import DateTimePicker
 
 pg.setConfigOptions(antialias=True, useOpenGL=True)
@@ -545,10 +546,13 @@ class TrendsWidget(QWidget):
             b.setStyleSheet(self._PRESET_OFF)
 
     def _add_channel(self, name: str, color: str):
+        # В легенде показываем подпись + единицу из signals.json (если есть).
+        # Внутренний ключ self._channels остаётся техническим именем.
+        display = signals.get_display(name)
         curve = self._plot.plot(
             [], [],
             pen=pg.mkPen(color=QColor(color), width=2),
-            name=name,
+            name=display,
         )
         curve.setClipToView(True)
         self._channels[name] = {
@@ -597,9 +601,10 @@ class TrendsWidget(QWidget):
         # Сохранить кнопку цвета в данных канала для обновления стиля при смене цвета
         ch['color_btn'] = color_btn
 
-        # Название
-        # 
-        lbl = QLabel(name)
+        # Название канала в левой панели — подпись из signals.json (фоллбек на техническое имя).
+        # tooltip оставляем техническим именем чтобы было видно "что под капотом".
+        display = signals.get_display(name)
+        lbl = QLabel(display)
         lbl.setStyleSheet("color:#cccccc; font-size:12px; background:transparent;")
         lbl.setToolTip(name)
 
@@ -617,7 +622,8 @@ class TrendsWidget(QWidget):
         ch['curve'].setVisible(visible)
         try:
             if visible:
-                self._legend.addItem(ch['curve'], name)
+                # В легенде — подпись (та же что и при создании канала).
+                self._legend.addItem(ch['curve'], signals.get_display(name))
             else:
                 self._legend.removeItem(ch['curve'])
         except Exception:
@@ -639,7 +645,7 @@ class TrendsWidget(QWidget):
         try:
             self._legend.removeItem(ch['curve'])
             if ch['visible']:
-                self._legend.addItem(ch['curve'], name)
+                self._legend.addItem(ch['curve'], signals.get_display(name))
         except Exception:
             pass
 
@@ -893,7 +899,9 @@ class TrendsWidget(QWidget):
 
         if best_name:
             dt_str = _dt.datetime.fromtimestamp(best_x).strftime("%d.%m %H:%M:%S")
-            label  = f"{best_name}\n{dt_str}  {best_y:.4g}"
+            # На маркере — подпись + единица из signals.json для читаемости.
+            display = signals.get_display(best_name)
+            label  = f"{display}\n{dt_str}  {best_y:.4g}"
             self._click_marker.setData([best_x], [best_y])
             self._click_label.setPos(best_x, best_y)
             self._click_label.setText(label)

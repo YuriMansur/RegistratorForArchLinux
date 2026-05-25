@@ -3,8 +3,8 @@ import json
 # Path — для удобной работы с путями к файлам.
 from pathlib import Path
 
-# Путь к файлу конфига рядом с config.py (в папке client/).
-CONFIG_FILE = Path(__file__).parent / "config.json"
+# Путь к файлу конфига: client/config/config.json.
+CONFIG_FILE = Path(__file__).parent / "config" / "config.json"
 
 # IP-адрес сервера по умолчанию — используется если config.json не существует.
 DEFAULT_HOST = "192.168.100.100"
@@ -33,6 +33,8 @@ def save_config(host: str, port: int) -> None:
     Вызывается из SettingsDialog при нажатии OK.
     indent=2 — форматированный JSON для читаемости при ручном редактировании.
     """
+    # Гарантируем существование папки config/ перед записью (первый сейв после клонирования).
+    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(CONFIG_FILE, "w") as f:
         # Записываем host и port в файл рядом с клиентом.
         json.dump({"host": host, "port": port}, f, indent=2)

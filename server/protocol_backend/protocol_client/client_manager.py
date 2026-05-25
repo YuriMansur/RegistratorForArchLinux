@@ -1,16 +1,17 @@
 # re — встроенный модуль регулярных выражений, используется для разбора NodeId строк.
 import re
+# json — для загрузки конфига серверов из servers.json.
+import json
 # logging — стандартный логгер Python для вывода info/warning/error.
 import logging
 # threading — для таймеров переподключения и фоновых потоков экспорта.
 import threading
+# Path — для построения абсолютного пути к servers.json относительно файла.
+from pathlib import Path
 # datetime — для фиксации времени начала и конца сессии испытания.
 from datetime import datetime, timezone, timedelta
 # OpcUaBackend — менеджер OPC UA соединений, через него всё общение с ПЛК.
 from protocol_backend.protocol_client.opcua.opcua_backend.opcua_backend import OpcUaBackend
-# Tags — класс с node_id всех тегов ПЛК 192.168.10.10.
-# Импортируем под псевдонимом Tags для краткости.
-from protocol_backend.protocol_client.opcua_tags import Dev_192_168_10_10_OPC_Tags as Tags
 # tag_writer — пишет текущее значение тега и опционально историю в SQLite.
 from db import tag_writer
 # session_exporter — экспортирует данные сессии испытания в xlsx/docx.
@@ -21,64 +22,89 @@ from db import test_manager
 from services import live_data
 
 
-# ── Конфигурация серверов ─────────────────────────────────────────────────────
-# Список конфигов OPC UA серверов. Каждый dict описывает один сервер:
-#   name              — уникальное имя сервера (используется как ключ во всех методах)
-#   endpoint          — URL OPC UA сервера
-#   auto_reconnect    — True: автоматически переподключаться при обрыве связи
-#   reconnect_interval— интервал переподключения в секундах
-#   subscribe         — список node_id тегов для подписки (значения приходят мгновенно при изменении)
-#   polls             — список групп опроса: name, nodes, interval, sequential
-_SERVERS = [
-    {
-        "name"              : "PLC1",
-        "endpoint"          : "opc.tcp://192.168.10.10:4840",
-        "auto_reconnect"    : True,
-        "reconnect_interval": 5,
-        # Управляющие теги: inProcess — сессия запущена, End — сессия завершена.
-        # Подписка нужна чтобы реагировать мгновенно, без задержки опроса.
-        "subscribe"         : [Tags.inProcess, Tags.End],
-        "polls"             : [
-            # arrays — группа опроса всех данных испытания (ForUra).
-            # sequential=True: читать узлы последовательно, чтобы не перегружать ПЛК.
-            {"name": "arrays", "nodes": [Tags.rDTAT,
-                                         Tags.rDavDDA,
-                                         Tags.rDavDDB,
-                                         Tags.rDavDDB_kPa,
-                                         Tags.rDavDDN1,
-                                         Tags.rDavDDN2,
-                                         Tags.rDavDDP1,
-                                         Tags.rDavDDP1_1,
-                                         Tags.rDavDDP2,
-                                         Tags.rDavReserve1,
-                                         Tags.rDavReserve2,
-                                         Tags.rTempDT1,
-                                         Tags.rTempDT2,
-                                         Tags.rTempDTB,
-                                         Tags.inProcess,
-                                         Tags.End],
-                                        "interval": 1.0, "sequential": False},
-        ],
-    },
-]
+# Путь к JSON-конфигу серверов: server/config/servers.json.
+# Этот файл лежит в server/protocol_backend/protocol_client/ — поднимаемся на 3 уровня до server/.
+_CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "servers.json"
 
 # Логгер для этого модуля — имя совпадает с именем файла.
 log = logging.getLogger(__name__)
 
-# Обратный маппинг: node_id → имя переменной из класса Tags.
-# Нужен чтобы при записи в БД получить человекочитаемое имя тега.
-# Пример: "ns=2;s=Application.Control.inProcess" → "inProcess"
-# Строится один раз при загрузке модуля через dict comprehension по vars(Tags).
+
+def _load_config(path: Path) -> list[dict]:
+    """Загрузить и провалидировать конфиг серверов из JSON.
+    Каждый тег разворачивается из короткого идентификатора в полный NodeId формата
+    "ns=N;s=Identifier". Имена тегов в subscribe/polls/control заменяются на NodeId.
+    Args:
+        path (Path): Путь к servers.json.
+    Returns:
+        Список dict'ов с готовой к использованию конфигурацией каждого сервера."""
+    # Читаем файл как UTF-8, чтобы корректно обрабатывать любые имена.
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    servers = []
+    # Перебираем все серверы из верхнеуровневого ключа "servers".
+    for srv in raw.get("servers", []):
+        name = srv["name"]
+        # Пространство имён OPC UA — общее для всех тегов этого сервера.
+        ns = srv.get("ns", 2)
+        # Маппинг короткое имя → NodeId. Пример: "rDTAT" → "ns=2;s=Application....rDTAT".
+        tag_map: dict[str, str] = {
+            tag_name: f"ns={ns};s={ident}"
+            for tag_name, ident in srv.get("tags", {}).items()
+        }
+
+        # Проверяем что все имена в subscribe/polls/control действительно есть в tags.
+        def resolve(tag_name: str) -> str:
+            if tag_name not in tag_map:
+                raise ValueError(
+                    f"Сервер {name}: тег '{tag_name}' не найден в секции 'tags'"
+                )
+            return tag_map[tag_name]
+
+        # Подписки — переводим имена в NodeId.
+        subscribe = [resolve(t) for t in srv.get("subscribe", [])]
+        # Polls — каждая группа тоже разворачивается в NodeId.
+        polls = []
+        for poll in srv.get("polls", []):
+            polls.append({
+                "name":       poll["name"],
+                "interval":   poll["interval"],
+                "sequential": poll.get("sequential", False),
+                "nodes":      [resolve(t) for t in poll.get("tags", [])],
+            })
+        # Control-теги: ключи "in_process"/"end" → NodeId.
+        control = {key: resolve(tag_name) for key, tag_name in srv.get("control", {}).items()}
+
+        servers.append({
+            "name":               name,
+            "endpoint":           srv["endpoint"],
+            "auto_reconnect":     srv.get("auto_reconnect", True),
+            "reconnect_interval": srv.get("reconnect_interval", 5),
+            "tag_map":            tag_map,
+            "subscribe":          subscribe,
+            "polls":              polls,
+            "control":            control,
+        })
+    return servers
+
+
+# Конфиги всех серверов — загружаются при импорте модуля.
+_SERVERS = _load_config(_CONFIG_PATH)
+
+# Обратный маппинг NodeId → имя тега, агрегированный по всем серверам.
+# Нужен чтобы при записи в БД получить человекочитаемое имя по NodeId.
 _NODE_NAMES: dict[str, str] = {
-    # vars(Tags) возвращает все атрибуты класса Tags как dict {имя: значение}.
-    # Мы переворачиваем: {значение (node_id): имя}.
-    # Фильтруем служебные атрибуты (начинающиеся с "_").
-    v: k for k, v in vars(Tags).items() if not k.startswith("_")
+    node_id: tag_name
+    for srv in _SERVERS
+    for tag_name, node_id in srv["tag_map"].items()
 }
 
-# Множество node_id управляющих тегов — они не пишутся в историю,
-# только меняют состояние сессии испытания.
-_CONTROL_TAGS = {Tags.inProcess, Tags.End}
+# Множество всех NodeId, помеченных как control в любом из серверов —
+# они не пишутся в историю, только меняют состояние сессии испытания.
+_CONTROL_TAGS: set[str] = {
+    node_id
+    for srv in _SERVERS
+    for node_id in srv["control"].values()
+}
 
 
 class ServerManager:
@@ -311,7 +337,7 @@ class ServerManager:
         # Управляющие теги — особая обработка: не пишем в историю.
         if nid in _CONTROL_TAGS:
             tag_writer.write_tag(tag_id=nid, value=val, tag_name=tag_name, record_history=False)
-            self._handle_control(nid, val)
+            self._handle_control(srv, nid, val)
             return
 
         # Не-control теги от on_data_updated (не из poll) — пишем текущее значение без истории.
@@ -330,7 +356,7 @@ class ServerManager:
             nid = self._normalize_nid(nid)
             tag_name = _NODE_NAMES.get(nid, nid)
             if nid in _CONTROL_TAGS:
-                self._handle_control(nid, val)
+                self._handle_control(srv, nid, val)
                 continue
             tag_writer.write_tag(
                 tag_id=nid, value=val, tag_name=tag_name,
@@ -350,13 +376,20 @@ class ServerManager:
         # Обновляем время последнего успешного получения данных для watchdog'а.
         self._last_data_at = now
 
-    def _handle_control(self, nid: str, val):
+    def _handle_control(self, srv: str, nid: str, val):
         """Обработать управляющий тег — запустить или завершить сессию испытания.
         Args:
+            srv (str): Имя сервера-источника (для выбора маппинга control-тегов).
             nid (str): NodeId тега.
             val: Значение тега (ожидаем булево)."""
+        # Берём NodeId in_process/end именно того сервера, с которого пришёл тег —
+        # допускаем что у разных серверов могут быть разные адреса control-тегов.
+        control = self._config.get(srv, {}).get("control", {})
+        in_process_nid = control.get("in_process")
+        end_nid = control.get("end")
+
         # inProcess=True и сессия ещё не запущена → СТАРТ испытания.
-        if nid == Tags.inProcess and bool(val) and not self._recording:
+        if nid == in_process_nid and bool(val) and not self._recording:
             # Включаем запись истории для всех последующих тегов.
             self._recording = True
             # Фиксируем время начала — понадобится при экспорте.
@@ -368,7 +401,7 @@ class ServerManager:
         # inProcess=False пока сессия активна → неявный конец испытания.
         # Это случается когда ПЛК сбросил inProcess раньше чем послал End=True,
         # или подписка пропустила пульс End=True (он короче publishing interval 500мс).
-        elif nid == Tags.inProcess and not bool(val) and self._recording:
+        elif nid == in_process_nid and not bool(val) and self._recording:
             self._recording = False
             session_end = datetime.now(timezone.utc)
             test_manager.end_test(self._current_test_id)
@@ -385,7 +418,7 @@ class ServerManager:
             self._current_test_id = None
 
         # End=True и сессия была запущена → КОНЕЦ испытания.
-        elif nid == Tags.End and bool(val) and self._recording:
+        elif nid == end_nid and bool(val) and self._recording:
             # Выключаем запись истории.
             self._recording = False
             # Фиксируем время конца сессии.

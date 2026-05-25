@@ -14,7 +14,7 @@ __pycache__/
 *.sqlite3
 
 # Client config (contains server IP)
-client/config.json
+client/config/config.json
 
 # Logs
 *.log

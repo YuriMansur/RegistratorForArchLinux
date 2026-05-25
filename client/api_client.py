@@ -72,6 +72,12 @@ def get_live_tags() -> list[dict]:
     return _get("/tags/live", timeout=TIMEOUT).json()
 
 
+def get_signals() -> dict[str, dict]:
+    """Получить маппинг {имя тега: {label, unit}} из server/config/signals.json
+    (GET /signals). Используется модулем client.signals для перевода имён в подписи."""
+    return _get("/signals", timeout=TIMEOUT).json()
+
+
 def get_history(limit: int = 10000) -> list[dict]:
     """Получить последние N записей истории из БД (GET /history)."""
     return _get("/history", params={"limit": limit}, timeout=TIMEOUT).json()
