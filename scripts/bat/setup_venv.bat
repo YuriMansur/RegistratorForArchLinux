@@ -7,7 +7,8 @@ rem === Run once after `git clone`. Idempotent: safe to re-run to refresh depend
 rem Required Python major.minor (must match what client/.venv was built against).
 set "PY_TAG=3.12"
 
-set "ROOT_DIR=%~dp0"
+rem %~dp0 — папка scripts\bat\, ..\..\ поднимает к корню проекта.
+set "ROOT_DIR=%~dp0..\..\"
 set "CLIENT_DIR=%ROOT_DIR%client"
 set "VENV=%CLIENT_DIR%\.venv"
 set "REQ=%CLIENT_DIR%\requirements.txt"
