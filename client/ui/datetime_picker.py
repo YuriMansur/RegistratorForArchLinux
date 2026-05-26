@@ -320,8 +320,10 @@ class _ArrowButton(QWidget):
 
 # ── Публичный виджет ──────────────────────────────────────────────────────────
 
-_FMT = "dd.MM.yyyy HH:mm"
-_PY_FMT = "%d.%m.%Y %H:%M"
+# С секундами — иначе при загрузке диапазона из checkout (ended_at = HH:MM:SS.ms)
+# секунды обрезаются и фильтр /history/range отсекает до 59 секунд данных в конце.
+_FMT = "dd.MM.yyyy HH:mm:ss"
+_PY_FMT = "%d.%m.%Y %H:%M:%S"
 
 
 class DateTimePicker(QWidget):
@@ -332,8 +334,9 @@ class DateTimePicker(QWidget):
         layout.setSpacing(0)
 
         self._edit = QLineEdit()
-        self._edit.setPlaceholderText("дд.мм.гггг чч:мм")
-        self._edit.setMinimumWidth(130)
+        # Placeholder и ширина — с учётом секунд.
+        self._edit.setPlaceholderText("дд.мм.гггг чч:мм:сс")
+        self._edit.setMinimumWidth(160)
         self._edit.editingFinished.connect(self._on_manual_edit)
         layout.addWidget(self._edit)
 
@@ -362,15 +365,20 @@ class DateTimePicker(QWidget):
     def _try_parse_edit(self):
         from datetime import datetime as _dt
         text = self._edit.text().strip()
-        try:
-            parsed = _dt.strptime(text, _PY_FMT)
-            self._dt = QDateTime(
-                parsed.year, parsed.month, parsed.day,
-                parsed.hour, parsed.minute, 0,
-            )
-            self._edit.setStyleSheet("")
-        except ValueError:
-            self._edit.setStyleSheet("border: 1px solid #e74c3c;")
+        # Пробуем сначала формат с секундами, затем — без (для совместимости со старым ручным вводом).
+        for fmt in (_PY_FMT, "%d.%m.%Y %H:%M"):
+            try:
+                parsed = _dt.strptime(text, fmt)
+                self._dt = QDateTime(
+                    parsed.year, parsed.month, parsed.day,
+                    parsed.hour, parsed.minute, parsed.second,
+                )
+                self._edit.setStyleSheet("")
+                return
+            except ValueError:
+                continue
+        # Ни один формат не подошёл — подсвечиваем поле красным.
+        self._edit.setStyleSheet("border: 1px solid #e74c3c;")
 
     def _sync_edit(self):
         self._edit.setStyleSheet("")

@@ -32,12 +32,32 @@ def save_config(host: str, port: int) -> None:
 
     Вызывается из SettingsDialog при нажатии OK.
     indent=2 — форматированный JSON для читаемости при ручном редактировании.
+    Остальные ключи (например trends_visible) сохраняются — мерджим с существующими.
     """
     # Гарантируем существование папки config/ перед записью (первый сейв после клонирования).
     CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_FILE, "w") as f:
-        # Записываем host и port в файл рядом с клиентом.
-        json.dump({"host": host, "port": port}, f, indent=2)
+    # Читаем существующее, чтобы не стереть произвольные ключи (UI-prefs и т.п.).
+    existing = load_config() if CONFIG_FILE.exists() else {}
+    existing["host"] = host
+    existing["port"] = port
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        # ensure_ascii=False — чтобы русские подписи (если попадут в конфиг) остались читаемыми.
+        json.dump(existing, f, indent=2, ensure_ascii=False)
+
+
+def get_key(key: str, default=None):
+    """Прочитать произвольный ключ из config.json. Возвращает default если нет ключа или файла."""
+    return load_config().get(key, default)
+
+
+def save_key(key: str, value) -> None:
+    """Сохранить произвольный ключ в config.json, сохраняя остальные.
+    Используется для UI-prefs (видимость кривых трендов и т.п.)."""
+    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    existing = load_config() if CONFIG_FILE.exists() else {}
+    existing[key] = value
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(existing, f, indent=2, ensure_ascii=False)
 
 
 def get_base_url() -> str:

@@ -12,6 +12,7 @@ from PyQt6.QtCore import Qt, QDateTime, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
 
 import api_client
+import config
 import signals
 from ui.datetime_picker import DateTimePicker
 
@@ -28,6 +29,22 @@ class _LiveWorker(QThread):
             self.result.emit(tags, now)
         except Exception:
             pass
+
+
+class _FetchWorker(QThread):
+    """Универсальный фоновый воркер: дёргает fn() и эмитит результат.
+    None в сигнале — была ошибка (сервер недоступен / таймаут). UI не блокируется."""
+    result = pyqtSignal(object)
+
+    def __init__(self, fn, parent=None):
+        super().__init__(parent)
+        self._fn = fn
+
+    def run(self):
+        try:
+            self.result.emit(self._fn())
+        except Exception:
+            self.result.emit(None)
 
 
 _STREAM_CHUNK = 5000   # кол-во строк между обновлениями графика
@@ -226,6 +243,68 @@ class _CheckoutCombo(QComboBox):
         super().showPopup()
 
 
+class _ClickableLabel(QLabel):
+    """QLabel с сигналом клика — используется в строках каналов как toggle видимости.
+    Левый клик эмитит clicked, чтобы привязать к toggle visibility."""
+    clicked = pyqtSignal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+class _ClickableLegend(pg.LegendItem):
+    """Подкласс pyqtgraph LegendItem с поддержкой клика по записи легенды.
+    Клик переключает видимость соответствующей кривой; скрытые записи не удаляются
+    из легенды, а просто бледнеют — чтобы пользователь мог вернуть их обратно тем же кликом."""
+
+    def __init__(self, *args, on_click=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        # on_click(curve) — внешний хендлер; передаём ему curve-объект, по которому
+        # вызывающий код находит technical name в self._channels.
+        self._on_click = on_click
+
+    def addItem(self, item, name):
+        super().addItem(item, name)
+        if not self.items:
+            return
+        # Последняя добавленная пара — наш новый item. Цепляем клик на оба виджета:
+        # sample (короткая цветная полоска) + label (текст подписи).
+        sample, label = self.items[-1]
+        # Запоминаем исходный текст подписи — нужно чтобы заново применить html-стиль
+        # при изменении видимости (LabelItem не отдаёт текст обратно простым способом).
+        label._original_text = name
+        for w in (sample, label):
+            w.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+            self._attach_click(w, item)
+
+    def _attach_click(self, widget, curve):
+        """Подменить mousePressEvent на функцию, вызывающую on_click(curve)."""
+        def _press(ev):
+            if ev.button() == Qt.MouseButton.LeftButton and self._on_click is not None:
+                self._on_click(curve)
+                ev.accept()
+                return
+            # Прочие кнопки — ничего, не пропускаем дальше (легенду никто не двигает мышью).
+        widget.mousePressEvent = _press
+
+    def set_item_visible(self, curve, visible: bool):
+        """Бледнеем/восстанавливаем подпись и sample-линию в легенде по видимости кривой.
+        Не удаляем — иначе пользователь не сможет вернуть скрытую кривую тем же кликом."""
+        for sample, label in self.items:
+            # ItemSample хранит ссылку на исходный item — по нему и находим запись.
+            if getattr(sample, 'item', None) is curve:
+                color = "#cccccc" if visible else "#555555"
+                # LabelItem.setText сам принимает color (вставляется в html).
+                text = getattr(label, '_original_text', None)
+                if text is not None:
+                    label.setText(text, color=color)
+                # ItemSample — не имеет setColor, но opacity снизим.
+                sample.setOpacity(1.0 if visible else 0.3)
+                return
+
+
 class TrendsWidget(QWidget):
     _PRESET_ON  = (
         "QPushButton { background-color: #1a8fe3; color: white; "
@@ -239,6 +318,10 @@ class TrendsWidget(QWidget):
         self._live_data: dict[str, tuple[list, list]] = {}
         self._live_buffer: dict[str, tuple[list, list]] = {}  # фоновый буфер, копится всегда
         self._live_paused = False
+        # Глобальное состояние "Показать точки". Нужно чтобы каналы, добавленные асинхронно
+        # ПОСЛЕ клика по кнопке, тоже получили маркеры — иначе из 14 кривых точки видны
+        # только на тех что успели подгрузиться до клика.
+        self._show_points: bool = False
         self._live_worker: _LiveWorker | None = None
         self._live_timer = QTimer(self)
         self._live_timer.timeout.connect(self._live_tick)
@@ -423,8 +506,14 @@ class TrendsWidget(QWidget):
         # Патч для предотвращения появления кнопки автомасштаба при наведении курсора на область графика
         auto_btn.show = lambda: None
 
-        # Добавление легенды к графику для отображения названий каналов и их цветов
-        self._legend = self._plot.addLegend(offset = (10, 10))
+        # Кастомная кликабельная легенда — клик по записи переключает видимость кривой.
+        # Состояние сохраняется в config.json через _on_visibility_toggled.
+        plot_item = self._plot.getPlotItem()
+        self._legend = _ClickableLegend(offset=(10, 10), on_click=self._on_legend_click)
+        # Привязываем легенду к ViewBox графика (так же как делает встроенный addLegend).
+        self._legend.setParentItem(plot_item.vb)
+        # PlotItem ищет legend атрибут, чтобы автоматически вызвать addItem при plot(name=...).
+        plot_item.legend = self._legend
         # Добавление графика в основной ряд интерфейса с коэффициентом растяжения
         main_row.addWidget(self._plot, 1)
 
@@ -483,9 +572,19 @@ class TrendsWidget(QWidget):
     _SKIP_TAGS = {"inProcess", "End"}
 
     def _load_tags(self):
-        try:
-            tags = api_client.get_tags()
-        except Exception:
+        """Запросить список тегов с сервера в фоне. UI не блокируется при таймауте."""
+        # Не дублируем запрос если предыдущий ещё бежит — иначе при быстрых вызовах
+        # (старт, переключение в Live) накопятся параллельные потоки.
+        if getattr(self, "_tags_worker", None) and self._tags_worker.isRunning():
+            return
+        self._tags_worker = _FetchWorker(api_client.get_tags, self)
+        self._tags_worker.result.connect(self._apply_tags)
+        self._tags_worker.start()
+
+    def _apply_tags(self, tags):
+        """Callback из _FetchWorker — обновить список каналов из полученных тегов."""
+        # None или [] — сервер недоступен или нет данных, просто игнорируем.
+        if not tags:
             return
         color_idx = len(self._channels)
         for t in tags:
@@ -496,9 +595,17 @@ class TrendsWidget(QWidget):
             color_idx += 1
 
     def _load_checkouts(self):
-        try:
-            checkouts = api_client.get_checkouts()
-        except Exception:
+        """Запросить список испытаний с сервера в фоне. UI не блокируется при таймауте."""
+        if getattr(self, "_checkouts_worker", None) and self._checkouts_worker.isRunning():
+            return
+        self._checkouts_worker = _FetchWorker(api_client.get_checkouts, self)
+        self._checkouts_worker.result.connect(self._apply_checkouts)
+        self._checkouts_worker.start()
+
+    def _apply_checkouts(self, checkouts):
+        """Callback из _FetchWorker — заполнить выпадающий список испытаний."""
+        # None — сервер недоступен; пустой список — нет испытаний (всё равно покажем "Произвольный").
+        if checkouts is None:
             return
         self._checkout_combo.blockSignals(True)
         prev_id = self._checkout_combo.currentData()
@@ -549,6 +656,8 @@ class TrendsWidget(QWidget):
         # В легенде показываем подпись + единицу из signals.json (если есть).
         # Внутренний ключ self._channels остаётся техническим именем.
         display = signals.get_display(name)
+        # Восстанавливаем сохранённую видимость из конфига (по умолчанию True — показывать).
+        saved_visible = (config.get_key("trends_visible", {}) or {}).get(name, True)
         curve = self._plot.plot(
             [], [],
             pen=pg.mkPen(color=QColor(color), width=2),
@@ -560,14 +669,26 @@ class TrendsWidget(QWidget):
             'color':      color,
             'width':      2,
             'points':     False,
-            'visible':    True,
+            'visible':    bool(saved_visible),
             'toggle_btn': None,
             'color_btn':  None,
         }
+        # Если канал должен быть скрыт по сохранённому состоянию — спрятать сразу.
+        # В легенде запись НЕ удаляем (иначе кликнуть негде), а делаем бледной.
+        if not saved_visible:
+            curve.setVisible(False)
+            try:
+                self._legend.set_item_visible(curve, False)
+            except Exception:
+                pass
         row = self._make_channel_row(name)
         count = self._ch_layout.count()
         self._ch_layout.insertWidget(count - 1, row)
         self._update_panel_width()
+        # Применяем глобальное состояние "Показать точки" к свеже-добавленной кривой —
+        # иначе async-добавленные каналы не получат маркеры.
+        if self._show_points:
+            self._set_points(name, True)
 
     def _update_panel_width(self):
         max_w = 0
@@ -603,16 +724,48 @@ class TrendsWidget(QWidget):
 
         # Название канала в левой панели — подпись из signals.json (фоллбек на техническое имя).
         # tooltip оставляем техническим именем чтобы было видно "что под капотом".
+        # Клик по подписи переключает видимость кривой — без отдельной кнопки.
         display = signals.get_display(name)
-        lbl = QLabel(display)
-        lbl.setStyleSheet("color:#cccccc; font-size:12px; background:transparent;")
-        lbl.setToolTip(name)
+        lbl = _ClickableLabel(display)
+        lbl.setToolTip(name + "  (клик — показать/скрыть)")
+        lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Стиль определяется текущей видимостью: яркий текст = виден, серый = скрыт.
+        self._apply_label_style(lbl, ch['visible'])
+        lbl.clicked.connect(lambda n = name: self._on_visibility_toggled(n, not self._channels[n]['visible']))
+        # Сохраняем ссылку на лейбл — чтобы обновлять стиль при toggle.
+        ch['label'] = lbl
+        # toggle_btn оставляем None — отдельной кнопки больше нет, _select_all/_select_none
+        # теперь не работают (они и так были не подключены ни к одному UI-элементу).
+        ch['toggle_btn'] = None
 
-  
+
         hl.addWidget(color_btn)
         hl.addWidget(lbl, 1)
 
         return row
+
+    @staticmethod
+    def _apply_label_style(lbl: QLabel, visible: bool) -> None:
+        """Стиль подписи: яркий #cccccc когда виден, серый #555 когда скрыт."""
+        color = "#cccccc" if visible else "#555555"
+        lbl.setStyleSheet(f"color:{color}; font-size:12px; background:transparent;")
+
+    def _on_visibility_toggled(self, name: str, checked: bool):
+        """Клик по подписи канала — переключить видимость и сохранить в config."""
+        # _toggle_visible умеет обновлять curve.setVisible и легенду.
+        self._toggle_visible(name, checked)
+        # Перекрасить подпись — серый цвет когда скрыт, яркий когда виден.
+        ch = self._channels.get(name)
+        if ch and ch.get('label') is not None:
+            self._apply_label_style(ch['label'], checked)
+        # Сохраняем состояние в config.json — кэш загружается при следующем _add_channel.
+        try:
+            visible_map = config.get_key("trends_visible", {}) or {}
+            visible_map[name] = bool(checked)
+            config.save_key("trends_visible", visible_map)
+        except Exception:
+            # Запись настроек — не критично, не падаем при ошибке записи.
+            pass
 
     def _toggle_visible(self, name: str, visible: bool):
         ch = self._channels.get(name)
@@ -620,14 +773,23 @@ class TrendsWidget(QWidget):
             return
         ch['visible'] = visible
         ch['curve'].setVisible(visible)
+        # Легенда теперь не удаляет записи — просто меняет стиль (см. _ClickableLegend),
+        # чтобы скрытую запись можно было вернуть тем же кликом по ней.
         try:
-            if visible:
-                # В легенде — подпись (та же что и при создании канала).
-                self._legend.addItem(ch['curve'], signals.get_display(name))
-            else:
-                self._legend.removeItem(ch['curve'])
+            self._legend.set_item_visible(ch['curve'], visible)
         except Exception:
             pass
+
+    def _on_legend_click(self, curve):
+        """Callback из _ClickableLegend — клик по записи в легенде.
+        Находим tech_name по curve-объекту и переключаем видимость."""
+        for name, ch in self._channels.items():
+            if ch['curve'] is curve:
+                new_visible = not ch['visible']
+                # Используем общий хендлер — он сам обновит лейбл слева,
+                # стиль записи в легенде и запишет в config.json.
+                self._on_visibility_toggled(name, new_visible)
+                return
 
 
     # Смена цвета канала: открытие диалога выбора цвета, обновление цвета линии, кнопки и легенды
@@ -642,12 +804,8 @@ class TrendsWidget(QWidget):
         ch['color_btn'].setStyleSheet(
             f"background-color:{ch['color']}; border-radius:2px; border:1px solid #555;")
         ch['curve'].setPen(pg.mkPen(color=_ch_qcolor(ch), width=ch['width']))
-        try:
-            self._legend.removeItem(ch['curve'])
-            if ch['visible']:
-                self._legend.addItem(ch['curve'], signals.get_display(name))
-        except Exception:
-            pass
+        # ItemSample в легенде автоматически перерисуется с новым цветом — curve
+        # держит pen, sample его читает. Удалять/добавлять запись больше не нужно.
 
     def _set_width(self, name: str, width: int):
         ch = self._channels.get(name)
@@ -677,6 +835,8 @@ class TrendsWidget(QWidget):
                 ch['toggle_btn'].setChecked(False)
 
     def _set_all_points(self, checked: bool):
+        # Запоминаем глобально — иначе каналы, добавленные позже, не получат маркеры.
+        self._show_points = checked
         for name in self._channels:
             self._set_points(name, checked)
 
@@ -874,11 +1034,18 @@ class TrendsWidget(QWidget):
             return
         mp = vb.mapSceneToView(pos)
         click_x = mp.x()
+        click_y = mp.y()
 
-        # Ищем ближайшую точку по X среди видимых каналов
+        # Ищем ближайшую точку в 2D с нормализацией по диапазону viewport.
+        # Иначе при одинаковых X у всех кривых (так пишутся poll-батчи на сервере)
+        # побеждала бы первая в порядке итерации dict'а, независимо от Y под курсором.
+        (x0, x1), (y0, y1) = vb.viewRange()
+        x_span = (x1 - x0) or 1.0
+        y_span = (y1 - y0) or 1.0
+
         best_dist = float('inf')
         best_x = click_x
-        best_y = mp.y()
+        best_y = click_y
         best_name = ""
 
         for name, ch in self._channels.items():
@@ -889,10 +1056,15 @@ class TrendsWidget(QWidget):
                 continue
             xs = np.asarray(data[0])
             ys = np.asarray(data[1])
-            idx = int(np.argmin(np.abs(xs - click_x)))
-            dist = abs(float(xs[idx]) - click_x)
-            if dist < best_dist:
-                best_dist = dist
+            # Нормируем X и Y в [0..1] от viewport — Euclidean в этом пространстве
+            # соответствует визуальной близости к курсору на экране.
+            dx = (xs - click_x) / x_span
+            dy = (ys - click_y) / y_span
+            dists = np.hypot(dx, dy)
+            idx = int(np.argmin(dists))
+            d = float(dists[idx])
+            if d < best_dist:
+                best_dist = d
                 best_x = float(xs[idx])
                 best_y = float(ys[idx])
                 best_name = name

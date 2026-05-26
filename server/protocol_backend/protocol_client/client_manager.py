@@ -132,6 +132,9 @@ class ServerManager:
         self._last_data_at: datetime | None = None
         # Таймер watchdog'а второго уровня — проверяет что данные обновляются регулярно.
         self._data_watchdog_timer: threading.Timer | None = None
+        # Последняя целая секунда, записанная в tag_history — для дедупа "одна точка в секунду".
+        # Сбрасывается при старте/окончании каждой сессии испытания.
+        self._last_history_second: datetime | None = None
         # Регистрируем серверы в backend и подключаем callback'и.
         self._setup()
 
@@ -351,18 +354,38 @@ class ServerManager:
             poll_name (str): Имя группы опроса.
             batch (dict): {node_id: value} — все теги, прочитанные за один цикл."""
         now = datetime.now(timezone.utc)
-        live_batch: dict[str, tuple[str, datetime]] = {}
-        for nid, val in batch.items():
-            nid = self._normalize_nid(nid)
-            tag_name = _NODE_NAMES.get(nid, nid)
+        # Округляем до целой секунды — гарантия "одна точка в секунду" в tag_history.
+        # При period polls ~0.8с в одну секунду может попасть 1-2 батча; дедуп оставит первый.
+        second = now.replace(microsecond=0)
+
+        # ── Шаг 1: control-теги обрабатываем ПЕРВЫМИ ────────────────────────────
+        # Иначе если inProcess стоит последним в списке polls.tags, при старте сессии
+        # сенсоры этого батча получают record_history=False (старое значение _recording).
+        normalized_batch = {self._normalize_nid(nid): val for nid, val in batch.items()}
+        for nid, val in normalized_batch.items():
             if nid in _CONTROL_TAGS:
                 self._handle_control(srv, nid, val)
-                continue
+
+        # ── Шаг 2: дедуп. Пишем history только если в этой секунде ещё не писали ──
+        # Если же мы пишем — фиксируем _last_history_second чтобы следующий батч в той
+        # же секунде пропустить. live_data и tag_values обновляются всегда.
+        write_history = self._recording and (second != self._last_history_second)
+        if write_history:
+            self._last_history_second = second
+
+        # ── Шаг 3: пишем сенсоры ────────────────────────────────────────────────
+        live_batch: dict[str, tuple[str, datetime]] = {}
+        for nid, val in normalized_batch.items():
+            if nid in _CONTROL_TAGS:
+                continue  # уже обработаны в шаге 1
+            tag_name = _NODE_NAMES.get(nid, nid)
             tag_writer.write_tag(
                 tag_id=nid, value=val, tag_name=tag_name,
-                record_history=self._recording,
+                record_history=write_history,
                 test_id=self._current_test_id,
-                recorded_at=now,
+                # В историю — округлённая секунда (для красивых "ровно :01, :02..." на графиках).
+                # В tag_values попадёт то же, но это OK — поле "Обновлено" просто без миллисекунд.
+                recorded_at=second,
             )
             from db.tag_writer import _serialize
             if isinstance(val, (list, tuple)):
@@ -396,6 +419,8 @@ class ServerManager:
             self._session_start = datetime.now(timezone.utc)
             # Создаём запись в таблице checkouts и получаем её ID.
             self._current_test_id = test_manager.start_test()
+            # Сброс дедуп-трекера: первая секунда нового испытания должна записаться.
+            self._last_history_second = None
             log.info("Session started (test_id=%s)", self._current_test_id)
 
         # inProcess=False пока сессия активна → неявный конец испытания.
@@ -403,6 +428,8 @@ class ServerManager:
         # или подписка пропустила пульс End=True (он короче publishing interval 500мс).
         elif nid == in_process_nid and not bool(val) and self._recording:
             self._recording = False
+            # Сброс дедуп-трекера — следующая сессия начнётся "с чистого листа".
+            self._last_history_second = None
             session_end = datetime.now(timezone.utc)
             test_manager.end_test(self._current_test_id)
             log.warning(
@@ -421,6 +448,8 @@ class ServerManager:
         elif nid == end_nid and bool(val) and self._recording:
             # Выключаем запись истории.
             self._recording = False
+            # Сброс дедуп-трекера — следующая сессия начнётся "с чистого листа".
+            self._last_history_second = None
             # Фиксируем время конца сессии.
             session_end = datetime.now(timezone.utc)
             # Закрываем запись в checkouts (проставляем ended_at).

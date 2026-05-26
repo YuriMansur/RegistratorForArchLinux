@@ -496,18 +496,36 @@ class HistoryController(QObject):
             to_dt   = (self._dt_to.dateTime().toPyDateTime()
                        .replace(tzinfo=local_tz).astimezone(_dt.timezone.utc))
 
-        # Проверяем есть ли данные перед запуском экспорта
-        try:
-            if isinstance(checkout, dict):
-                rows = api_client.get_checkout_history(checkout["id"])
-                count = len(rows)
-            else:
-                count = api_client.get_history_range_count(from_dt, to_dt)
-            if count == 0:
-                QMessageBox.warning(None, "Нет данных", "За выбранный период нет записей для экспорта.")
-                return
-        except Exception:
-            pass
+        # Сохраняем checkout/from_dt/to_dt чтобы продолжить после получения count'а в фоне.
+        self._btn_export.setEnabled(False)
+
+        # Pre-check кол-ва записей делаем в отдельном потоке —
+        # get_history_range_count имеет таймаут 10с, синхронный вызов морозил бы UI.
+        class _CountWorker(QThread):
+            done  = pyqtSignal(int)   # -1 если ошибка
+            def run(self_):
+                try:
+                    if isinstance(checkout, dict):
+                        rows = api_client.get_checkout_history(checkout["id"])
+                        self_.done.emit(len(rows))
+                    else:
+                        self_.done.emit(api_client.get_history_range_count(from_dt, to_dt))
+                except Exception:
+                    # Не блокируем экспорт если pre-check упал — пускай сервер сам разберётся.
+                    self_.done.emit(-1)
+
+        worker = _CountWorker()
+        self._count_worker = worker  # сохраняем чтобы GC не убил QThread до конца
+        worker.done.connect(lambda count: self._export_continue(checkout, from_dt, to_dt, count))
+        worker.start()
+
+    def _export_continue(self, checkout, from_dt, to_dt, count: int):
+        """Вторая половина _export_selected, вызывается из callback'а _CountWorker."""
+        self._btn_export.setEnabled(True)
+        if count == 0:
+            QMessageBox.warning(None, "Нет данных", "За выбранный период нет записей для экспорта.")
+            return
+        # count < 0 — pre-check упал, всё равно пробуем экспорт.
 
         dlg = QDialog(None)
         dlg.setWindowTitle("Экспорт")
