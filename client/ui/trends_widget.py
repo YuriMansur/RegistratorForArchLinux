@@ -329,6 +329,9 @@ class TrendsWidget(QWidget):
         self._live_data: dict[str, tuple[list, list]] = {}
         self._live_buffer: dict[str, tuple[list, list]] = {}  # фоновый буфер, копится всегда
         self._live_paused = False
+        # Явная заморозка Live от пользователя (через кнопку). Отличается от _live_paused —
+        # тот срабатывает только пока пользователь держит мышь над графиком.
+        self._live_frozen: bool = False
         # Глобальное состояние "Показать точки". Нужно чтобы каналы, добавленные асинхронно
         # ПОСЛЕ клика по кнопке, тоже получили маркеры — иначе из 14 кривых точки видны
         # только на тех что успели подгрузиться до клика.
@@ -413,6 +416,22 @@ class TrendsWidget(QWidget):
         self._btn_live.setStyleSheet(_mode_btn_style)
         self._btn_live.clicked.connect(lambda: self._set_mode(True))
         arch_layout.addWidget(self._btn_live)
+
+        # Pause/Resume для Live — явная заморозка обновлений (в отличие от автопаузы при
+        # перетаскивании мышью, которая срабатывает временно). Активна только в Live-режиме.
+        _freeze_btn_style = (
+            "QPushButton { color: #aaaaaa; background: #2b2b2b; border: 1px solid #555; border-radius: 3px; padding: 2px 10px; font-weight: bold; }"
+            "QPushButton:checked { color: #ffffff; background: #c0392b; border: 1px solid #e74c3c; }"
+            "QPushButton:hover { background: #3a3a3a; }"
+            "QPushButton:checked:hover { background: #a93226; }"
+            "QPushButton:disabled { color: #555; background: #232323; border: 1px solid #444; }"
+        )
+        self._btn_freeze = QPushButton("⏸ Пауза")
+        self._btn_freeze.setCheckable(True)
+        self._btn_freeze.setStyleSheet(_freeze_btn_style)
+        self._btn_freeze.setEnabled(False)  # активна только в Live-режиме
+        self._btn_freeze.clicked.connect(self._on_freeze_toggled)
+        arch_layout.addWidget(self._btn_freeze)
 
         arch_layout.addStretch()
         root.addWidget(arch_frame)
@@ -669,6 +688,10 @@ class TrendsWidget(QWidget):
         display = signals.get_display(name)
         # Восстанавливаем сохранённую видимость из конфига (по умолчанию True — показывать).
         saved_visible = (config.get_key("trends_visible", {}) or {}).get(name, True)
+        # Если пользователь когда-то менял цвет — берём сохранённый, иначе дефолтный из _COLORS.
+        saved_color = (config.get_key("trends_colors", {}) or {}).get(name)
+        if saved_color:
+            color = saved_color
         curve = self._plot.plot(
             [], [],
             pen=pg.mkPen(color=QColor(color), width=2),
@@ -837,6 +860,14 @@ class TrendsWidget(QWidget):
         ch['curve'].setPen(pg.mkPen(color=_ch_qcolor(ch), width=ch['width']))
         # ItemSample в легенде автоматически перерисуется с новым цветом — curve
         # держит pen, sample его читает. Удалять/добавлять запись больше не нужно.
+        # Сохраняем цвет в config.json (ключ trends_colors), чтобы при следующем
+        # запуске пользователь увидел свой выбор, а не дефолт из _COLORS.
+        try:
+            colors_map = config.get_key("trends_colors", {}) or {}
+            colors_map[name] = ch['color']
+            config.save_key("trends_colors", colors_map)
+        except Exception:
+            pass
 
     def _set_width(self, name: str, width: int):
         ch = self._channels.get(name)
@@ -876,6 +907,12 @@ class TrendsWidget(QWidget):
     def _set_mode(self, live: bool):
         self._btn_live.setChecked(live)
         self._btn_archive.setChecked(not live)
+        # Кнопка "Пауза" имеет смысл только в Live-режиме. При переходе в Архив
+        # сбрасываем заморозку и дизейблим кнопку.
+        self._btn_freeze.setEnabled(live)
+        if not live:
+            self._btn_freeze.setChecked(False)
+            self._live_frozen = False
         if live:
             self._load_tags()
             # Инициализируем live_data из накопленного буфера
@@ -909,7 +946,19 @@ class TrendsWidget(QWidget):
                 else:
                     ch['curve'].setData([], [])
 
+    def _on_freeze_toggled(self, checked: bool):
+        """Toggle ручной заморозки Live-режима. При заморозке graph остаётся как есть,
+        новые данные не добавляются (но фоновый buffer продолжает копить, чтобы при
+        возобновлении точки шли с актуального момента)."""
+        self._live_frozen = bool(checked)
+        # Меняем подпись кнопки чтобы было понятно текущее действие.
+        self._btn_freeze.setText("▶ Возобновить" if checked else "⏸ Пауза")
+
     def _live_tick(self):
+        # Если пользователь заморозил Live — не дёргаем сервер. Накопление в фоновый
+        # буфер всё равно идёт через отдельный _buf_timer/_buf_tick.
+        if self._live_frozen:
+            return
         if self._live_worker and self._live_worker.isRunning():
             return  # предыдущий запрос ещё не завершён
         self._live_worker = _LiveWorker(self)
