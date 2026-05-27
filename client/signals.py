@@ -32,14 +32,18 @@ _loaded: bool = False
 
 def refresh() -> bool:
     """Принудительно перезагрузить подписи с сервера.
-    Вызывать при старте приложения и при изменении signals.json на сервере.
-    Возвращает True если загрузка успешна."""
+    Вызывать при старте приложения и периодически — UI подхватит изменения signals.json
+    без перезапуска клиента.
+    Возвращает True если кэш ИЗМЕНИЛСЯ (а не просто успешно загрузился) — чтобы вызывающий
+    мог решить, нужно ли перерисовывать UI."""
     global _cache, _loaded
     try:
         # api_client.get_signals() сам ставит таймаут 2с — UI не зависает.
-        _cache = api_client.get_signals() or {}
+        new_cache = api_client.get_signals() or {}
+        changed = (new_cache != _cache)
+        _cache = new_cache
         _loaded = True
-        return True
+        return changed
     except Exception as e:
         log.warning("Не удалось получить /signals: %s — подписи будут техническими", e)
         # Помечаем как загруженные, чтобы каждый последующий get_label/get_unit

@@ -304,6 +304,17 @@ class _ClickableLegend(pg.LegendItem):
                 sample.setOpacity(1.0 if visible else 0.3)
                 return
 
+    def set_item_label(self, curve, new_text: str, visible: bool = True):
+        """Изменить подпись существующей записи в легенде. Используется когда на сервере
+        обновился signals.json и клиент периодически рефрешит подписи — без этого
+        старые тексты висели бы до перезапуска приложения."""
+        for sample, label in self.items:
+            if getattr(sample, 'item', None) is curve:
+                label._original_text = new_text
+                color = "#cccccc" if visible else "#555555"
+                label.setText(new_text, color=color)
+                return
+
 
 class TrendsWidget(QWidget):
     _PRESET_ON  = (
@@ -749,6 +760,26 @@ class TrendsWidget(QWidget):
         """Стиль подписи: яркий #cccccc когда виден, серый #555 когда скрыт."""
         color = "#cccccc" if visible else "#555555"
         lbl.setStyleSheet(f"color:{color}; font-size:12px; background:transparent;")
+
+    def refresh_signal_displays(self):
+        """Перерисовать подписи всех существующих кривых: лейблы в левой панели и
+        тексты записей в легенде. Вызывается из MainWindow когда на сервере обновился
+        signals.json — иначе старые тексты висели бы до перезапуска приложения."""
+        for name, ch in self._channels.items():
+            display = signals.get_display(name)
+            # Лейбл в левой панели (создан в _make_channel_row через _ClickableLabel).
+            if ch.get('label') is not None:
+                ch['label'].setText(display)
+            # Внутри curve хранится opts['name'] — обновим чтобы старое не вылезло где-то ещё.
+            try:
+                ch['curve'].opts['name'] = display
+            except Exception:
+                pass
+            # Запись в легенде — через метод _ClickableLegend, с учётом текущей видимости.
+            try:
+                self._legend.set_item_label(ch['curve'], display, visible=ch['visible'])
+            except Exception:
+                pass
 
     def _on_visibility_toggled(self, name: str, checked: bool):
         """Клик по подписи канала — переключить видимость и сохранить в config."""

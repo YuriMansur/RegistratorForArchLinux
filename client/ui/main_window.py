@@ -88,10 +88,29 @@ class MainWindow(QMainWindow):
         # Вызов метода для проверки соединения с сервером при инициализации главного окна,
         # чтобы сразу отобразить статус подключения при запуске приложения
         self._check_connection()
-        # Подгружаем подписи тегов с сервера в фоне — если сервер недоступен,
-        # signals.get_label() будет возвращать технические имена (фоллбек встроен).
+        # Периодический рефреш подписей тегов с сервера — если на сервере поправили
+        # signals.json и сделали деплой, UI подхватит без перезапуска. Первый рефреш
+        # сразу при старте; дальше — раз в 60 секунд.
+        self._refresh_signals()
+        self._signals_timer = QTimer(self)
+        self._signals_timer.timeout.connect(self._refresh_signals)
+        self._signals_timer.start(60_000)
+
+    def _refresh_signals(self):
+        """Запустить фоновый refresh signals-кэша. Если кэш изменился — перерисовать
+        подписи в TrendsWidget (лейблы каналов и записи в легенде)."""
+        # Защита от наложения если предыдущий запрос ещё не завершился.
+        if getattr(self, "_signals_worker", None) and self._signals_worker.isRunning():
+            return
         self._signals_worker = _PollWorker(signals_cache.refresh)
+        self._signals_worker.result.connect(self._on_signals_refreshed)
         self._signals_worker.start()
+
+    def _on_signals_refreshed(self, changed):
+        """Callback из _PollWorker — changed True если кэш отличается от прошлого."""
+        # changed=None при ошибке (сервер недоступен) — игнорируем.
+        if changed:
+            self._trends.refresh_signal_displays()
 
     # Метод для построения пользовательского интерфейса
     def _build_ui(self):
@@ -173,9 +192,11 @@ class MainWindow(QMainWindow):
         self._history = HistoryController(self)
         # Создание виджета вкладок и добавление вкладок для тегов, данных БД, экспорта и трендов
         tabs = QTabWidget()
+        # Сохраняем ссылку на TrendsWidget — нужна для периодического обновления подписей сигналов.
+        self._trends = TrendsWidget()
         # Добавление вкладки для OPC UA тегов
         tabs.addTab(TagsWidget(), "Данные реального времени")
-        tabs.addTab(TrendsWidget(), "Тренды")
+        tabs.addTab(self._trends, "Тренды")
         tabs.addTab(self._history.data_widget, "Данные БД")
         tabs.addTab(self._history.exports_widget, "Экспорты")
         tabs.addTab(BackupsWidget(), "Бэкапы")
