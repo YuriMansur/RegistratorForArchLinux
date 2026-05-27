@@ -108,8 +108,10 @@ class _ExportWatchWorker(QThread):
             self.error.emit(str(e))
             return
 
-        # Ждём появления/обновления папки (максимум 120 секунд)
-        deadline = time.time() + 120
+        # Ждём появления/обновления папки. 30 секунд — компромисс: нормальный экспорт
+        # завершается за 5-15с, если за 30 ничего не появилось — почти наверняка нечего
+        # экспортировать (после фильтрации control-тегов на сервере осталось 0 строк).
+        deadline = time.time() + 30
         while self._running and time.time() < deadline:
             time.sleep(2)
             try:
@@ -121,8 +123,12 @@ class _ExportWatchWorker(QThread):
                         return
             except Exception:
                 pass
-        # Таймаут или остановка — пустой экспорт (нет данных за период)
-        self.error.emit("Нет данных для экспорта за выбранный период")
+        # Таймаут — сервер не создал/не обновил папку за 30 секунд.
+        # Чаще всего это значит что после фильтрации служебных тегов экспортировать нечего.
+        self.error.emit(
+            "За выбранный период нет данных для экспорта "
+            "(после фильтрации служебных тегов осталось 0 строк)."
+        )
 
     def stop(self):
         self._running = False
@@ -501,14 +507,27 @@ class HistoryController(QObject):
 
         # Pre-check кол-ва записей делаем в отдельном потоке —
         # get_history_range_count имеет таймаут 10с, синхронный вызов морозил бы UI.
+        # Сервер при экспорте фильтрует control-теги (_EXCLUDE_TAG_NAMES в session_exporter),
+        # поэтому и pre-check должен считать только "экспортируемые" строки — иначе
+        # будем зря висеть в watch'е 30с пока сервер увидит что писать нечего.
+        _EXPORT_EXCLUDE = {"inProcess", "End"}
+
         class _CountWorker(QThread):
             done  = pyqtSignal(int)   # -1 если ошибка
             def run(self_):
                 try:
                     if isinstance(checkout, dict):
+                        # Для checkout — фильтруем control-теги до подсчёта.
                         rows = api_client.get_checkout_history(checkout["id"])
-                        self_.done.emit(len(rows))
+                        non_control = [
+                            r for r in rows
+                            if r.get("tag_name", "").split("[", 1)[0] not in _EXPORT_EXCLUDE
+                        ]
+                        self_.done.emit(len(non_control))
                     else:
+                        # Для произвольного диапазона — серверный count, без фильтрации
+                        # (это дёшево, не тянем все строки). Если count>0, но после фильтра
+                        # на сервере будет 0 — таймаут watch'а ограничен 30с (см. ниже).
                         self_.done.emit(api_client.get_history_range_count(from_dt, to_dt))
                 except Exception:
                     # Не блокируем экспорт если pre-check упал — пускай сервер сам разберётся.
