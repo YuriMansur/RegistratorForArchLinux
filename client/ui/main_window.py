@@ -238,10 +238,11 @@ class MainWindow(QMainWindow):
 
     def _check_connection(self):
         """Запустить проверку соединения в фоновом потоке."""
-        w = _PollWorker(api_client.health_check)
-        w.result.connect(self._on_connection_result)
-        w.start()
-        self._conn_worker = w
+        if getattr(self, "_conn_worker", None) and self._conn_worker.isRunning():
+            return
+        self._conn_worker = _PollWorker(api_client.health_check)
+        self._conn_worker.result.connect(self._on_connection_result)
+        self._conn_worker.start()
 
     def _on_connection_result(self, ok):
         if ok:
@@ -253,10 +254,11 @@ class MainWindow(QMainWindow):
 
     def _poll_experiment(self):
         """Запустить опрос статуса испытания в фоновом потоке."""
-        w = _PollWorker(api_client.get_tags)
-        w.result.connect(self._on_experiment_result)
-        w.start()
-        self._exp_worker = w
+        if getattr(self, "_exp_worker", None) and self._exp_worker.isRunning():
+            return
+        self._exp_worker = _PollWorker(api_client.get_tags)
+        self._exp_worker.result.connect(self._on_experiment_result)
+        self._exp_worker.start()
 
     def _on_experiment_result(self, tags):
         if tags is None:
@@ -278,12 +280,13 @@ class MainWindow(QMainWindow):
 
     def _poll_usb(self):
         """Запустить опрос USB устройств в фоновом потоке."""
+        if getattr(self, "_usb_worker", None) and self._usb_worker.isRunning():
+            return
         def _fetch():
             return api_client.get_usb_devices(), api_client.get_usb_export_status()
-        w = _PollWorker(_fetch)
-        w.result.connect(self._on_usb_result)
-        w.start()
-        self._usb_worker = w
+        self._usb_worker = _PollWorker(_fetch)
+        self._usb_worker.result.connect(self._on_usb_result)
+        self._usb_worker.start()
 
     def _on_usb_result(self, data):
         if data is None:
@@ -319,10 +322,11 @@ class MainWindow(QMainWindow):
 
     def _poll_disk(self):
         """Запустить опрос диска в фоновом потоке."""
-        w = _PollWorker(api_client.get_disk_status)
-        w.result.connect(self._on_disk_result)
-        w.start()
-        self._disk_worker = w
+        if getattr(self, "_disk_worker", None) and self._disk_worker.isRunning():
+            return
+        self._disk_worker = _PollWorker(api_client.get_disk_status)
+        self._disk_worker.result.connect(self._on_disk_result)
+        self._disk_worker.start()
 
     def _on_disk_result(self, status):
         if status is None:

@@ -6,7 +6,7 @@ import pyqtgraph as pg
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QColorDialog, QFrame, QComboBox,
-    QLabel, QScrollArea,
+    QLabel, QScrollArea, QStyle,
 )
 from PyQt6.QtCore import Qt, QDateTime, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
@@ -426,12 +426,19 @@ class TrendsWidget(QWidget):
             "QPushButton:checked:hover { background: #a93226; }"
             "QPushButton:disabled { color: #555; background: #232323; border: 1px solid #444; }"
         )
-        self._btn_freeze = QPushButton("⏸ Пауза")
+        self._btn_freeze = QPushButton()
         self._btn_freeze.setCheckable(True)
+        self._btn_freeze.setFixedSize(28, 28)
+        self._btn_freeze.setToolTip("Пауза")
+        self._btn_freeze.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPause))
         self._btn_freeze.setStyleSheet(_freeze_btn_style)
         self._btn_freeze.setEnabled(False)  # активна только в Live-режиме
         self._btn_freeze.clicked.connect(self._on_freeze_toggled)
         arch_layout.addWidget(self._btn_freeze)
+
+        self._load_status = QLabel("")
+        self._load_status.setStyleSheet("color: #e74c3c; font-weight: bold;")
+        arch_layout.addWidget(self._load_status)
 
         arch_layout.addStretch()
         root.addWidget(arch_frame)
@@ -704,7 +711,6 @@ class TrendsWidget(QWidget):
             'width':      2,
             'points':     False,
             'visible':    bool(saved_visible),
-            'toggle_btn': None,
             'color_btn':  None,
         }
         # Если канал должен быть скрыт по сохранённому состоянию — спрятать сразу.
@@ -768,9 +774,6 @@ class TrendsWidget(QWidget):
         lbl.clicked.connect(lambda n = name: self._on_visibility_toggled(n, not self._channels[n]['visible']))
         # Сохраняем ссылку на лейбл — чтобы обновлять стиль при toggle.
         ch['label'] = lbl
-        # toggle_btn оставляем None — отдельной кнопки больше нет, _select_all/_select_none
-        # теперь не работают (они и так были не подключены ни к одному UI-элементу).
-        ch['toggle_btn'] = None
 
 
         hl.addWidget(color_btn)
@@ -886,16 +889,6 @@ class TrendsWidget(QWidget):
         ch['curve'].setSymbolBrush(pg.mkBrush(ch['color']) if checked else None)
         ch['curve'].setSymbolPen(pg.mkPen(None))
 
-    def _select_all(self):
-        for ch in self._channels.values():
-            if not ch['visible'] and ch['toggle_btn'] is not None:
-                ch['toggle_btn'].setChecked(True)
-
-    def _select_none(self):
-        for ch in self._channels.values():
-            if ch['visible'] and ch['toggle_btn'] is not None:
-                ch['toggle_btn'].setChecked(False)
-
     def _set_all_points(self, checked: bool):
         # Запоминаем глобально — иначе каналы, добавленные позже, не получат маркеры.
         self._show_points = checked
@@ -951,8 +944,12 @@ class TrendsWidget(QWidget):
         новые данные не добавляются (но фоновый buffer продолжает копить, чтобы при
         возобновлении точки шли с актуального момента)."""
         self._live_frozen = bool(checked)
-        # Меняем подпись кнопки чтобы было понятно текущее действие.
-        self._btn_freeze.setText("▶ Возобновить" if checked else "⏸ Пауза")
+        if checked:
+            self._btn_freeze.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
+            self._btn_freeze.setToolTip("Возобновить")
+        else:
+            self._btn_freeze.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPause))
+            self._btn_freeze.setToolTip("Пауза")
 
     def _live_tick(self):
         # Если пользователь заморозил Live — не дёргаем сервер. Накопление в фоновый
@@ -1038,6 +1035,7 @@ class TrendsWidget(QWidget):
         if not visible_tags:
             return
 
+        self._load_status.setText("")
         self.btn_load.setEnabled(False)
         self.btn_load.setText("Загрузка...")
         # Сброс накопленных серий перед новой загрузкой
@@ -1077,6 +1075,9 @@ class TrendsWidget(QWidget):
 
     def _on_chunk(self, rows: list):
         self._parse_rows(rows)
+        for name, ch in self._channels.items():
+            if name in self._series:
+                ch['curve'].setData(*self._series[name])
 
     def _on_data_loaded(self):
         for name, ch in self._channels.items():
@@ -1087,7 +1088,7 @@ class TrendsWidget(QWidget):
         self._plot.getViewBox().autoRange()
 
     def _on_load_error(self, msg: str):
-        print(f"[trends] ошибка загрузки: {msg}")
+        self._load_status.setText(f"⚠ Ошибка: {msg}")
         self.btn_load.setEnabled(True)
         self.btn_load.setText("Построить")
 

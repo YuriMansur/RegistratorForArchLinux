@@ -1,8 +1,6 @@
-# datetime — для передачи временных диапазонов в параметрах запросов.
 from datetime import datetime
-# requests — синхронная HTTP-библиотека для запросов к FastAPI серверу.
+import json
 import requests
-# get_base_url — читает конфиг и возвращает "http://host:port".
 from config import get_base_url
 
 # Таймаут по умолчанию для большинства запросов в секундах.
@@ -160,7 +158,6 @@ def stream_history_range(
     Используется в TrendsWidget для отображения данных по мере загрузки.
     timeout=None — нет таймаута, стрим может идти долго для больших периодов.
     """
-    import json as _json
     params: dict = {"from_dt": from_dt.isoformat(), "to_dt": to_dt.isoformat()}
     # Добавляем фильтр по тегам если задан.
     if tags:
@@ -173,7 +170,7 @@ def stream_history_range(
             for line in r.iter_lines():
                 if line:
                     # Декодируем каждую строку в словарь и передаём вызывающему коду.
-                    yield _json.loads(line)
+                    yield json.loads(line)
 
 
 def export_date_range(from_dt: datetime, to_dt: datetime) -> dict:

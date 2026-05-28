@@ -1,7 +1,10 @@
 """Вкладка скачивания бэкапов через SFTP."""
+import logging
 from pathlib import Path
 
 import paramiko
+
+logging.getLogger("paramiko.transport").setLevel(logging.CRITICAL)
 from PyQt6.QtCore import QThread, pyqtSignal, QTimer, Qt, QObject
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,

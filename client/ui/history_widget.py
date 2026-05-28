@@ -585,12 +585,12 @@ class HistoryController(QObject):
 
     def _refresh_exports(self):
         class _W(QThread):
-            done = pyqtSignal(list)
+            done = pyqtSignal(object)
             def run(self):
                 try:
                     self.done.emit(api_client.get_exports())
                 except Exception:
-                    self.done.emit([])
+                    self.done.emit(None)
 
         w = _W()
         w.done.connect(self._apply_exports)
@@ -598,7 +598,7 @@ class HistoryController(QObject):
         self._exports_worker = w
 
     def _apply_exports(self, folders):
-        if not folders:
+        if folders is None:
             return
 
         expanded = set()

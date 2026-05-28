@@ -1,3 +1,4 @@
+import ast
 from datetime import datetime, timezone
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel,
@@ -77,15 +78,15 @@ class TagsWidget(QWidget):
         visible = [t for t in tags if t["tag_name"] not in _SKIP_TAGS]
         self.status_label.setText(f"Тегов: {len(visible)}")
 
-    def _fill(self, tags: list[dict]):
-        # Берём общий timestamp из первого тега
+    def _build_rows(self, tags: list[dict]) -> list[tuple[str, str, str]]:
+        """Собрать плоский список (display, value, ts) из тегов."""
         ts = ""
         for tag in tags:
             if tag["tag_name"] not in _SKIP_TAGS and tag.get("updated_at"):
                 ts = _utc_to_local(tag["updated_at"][:19])
                 break
 
-        self.table.setRowCount(0)
+        rows = []
         for tag in tags:
             name = tag["tag_name"]
             if name in _SKIP_TAGS:
@@ -93,23 +94,30 @@ class TagsWidget(QWidget):
             value_str = tag["value"]
             if value_str.startswith("["):
                 try:
-                    import ast
                     items = ast.literal_eval(value_str)
                     for i, item in enumerate(items):
-                        # signals.get_display сам формирует "Подпись[i] [ед.изм.]" для массивов.
-                        display = signals.get_display(f"{name}[{i}]")
-                        row = self.table.rowCount()
-                        self.table.insertRow(row)
-                        self.table.setItem(row, 0, QTableWidgetItem(display))
-                        self.table.setItem(row, 1, QTableWidgetItem(str(item)))
-                        self.table.setItem(row, 2, QTableWidgetItem(ts))
+                        rows.append((signals.get_display(f"{name}[{i}]"), str(item), ts))
                     continue
                 except Exception:
                     pass
-            # Скалярный тег — обычная подпись из signals.json.
-            display = signals.get_display(name)
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-            self.table.setItem(row, 0, QTableWidgetItem(display))
-            self.table.setItem(row, 1, QTableWidgetItem(value_str))
-            self.table.setItem(row, 2, QTableWidgetItem(ts))
+            rows.append((signals.get_display(name), value_str, ts))
+        return rows
+
+    def _fill(self, tags: list[dict]):
+        rows = self._build_rows(tags)
+
+        if self.table.rowCount() == len(rows):
+            # Число строк не изменилось — обновляем текст на месте, без мерцания.
+            for r, (display, value, ts) in enumerate(rows):
+                self.table.item(r, 0).setText(display)
+                self.table.item(r, 1).setText(value)
+                self.table.item(r, 2).setText(ts)
+        else:
+            # Состав тегов изменился — перестраиваем таблицу.
+            self.table.setRowCount(0)
+            for display, value, ts in rows:
+                row = self.table.rowCount()
+                self.table.insertRow(row)
+                self.table.setItem(row, 0, QTableWidgetItem(display))
+                self.table.setItem(row, 1, QTableWidgetItem(value))
+                self.table.setItem(row, 2, QTableWidgetItem(ts))
