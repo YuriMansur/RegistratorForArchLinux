@@ -1,0 +1,62 @@
+{
+  "servers": [
+    {
+      "name": "PLC1",
+      "endpoint": "opc.tcp://192.168.10.10:4840",
+      "auto_reconnect": true,
+      "reconnect_interval": 5,
+      "ns": 2,
+      "tags": {
+        "rDavDDNVD":    "Application.SensorsHandler.rDavDDNVD",
+        "rDavDDNND":    "Application.SensorsHandler.rDavDDNND",
+        "rDavDDB":      "Application.SensorsHandler.rDavDDB",
+        "rDavDDV":      "Application.SensorsHandler.rDavDDV",
+        "rDavDDA1":     "Application.SensorsHandler.rDavDDA1",
+        "rDavDDA2":     "Application.SensorsHandler.rDavDDA2",
+        "rDavDDPr":     "Application.SensorsHandler.rDavDDPr",
+        "rDavDDVD1":    "Application.SensorsHandler.rDavDDVD1",
+        "rDavDDVD2":    "Application.SensorsHandler.rDavDDVD2",
+        "rDavDDND1":    "Application.SensorsHandler.rDavDDND1",
+        "rDavDDND2":    "Application.SensorsHandler.rDavDDND2",
+        "rRasxodomer":  "Application.SensorsHandler.rRasxodomer",
+        "rDavReserve1": "Application.SensorsHandler.rDavReserve1",
+        "rDavReserve2": "Application.SensorsHandler.rDavReserve2", 
+        "inProcess":    "Application.Control.inProcess",
+        "End":          "Application.Control.End"
+      },
+      "control": {
+        "in_process": "inProcess",
+        "end":        "End"
+      },
+      "subscribe": ["inProcess", "End"],
+      "polls": [
+        {
+          "name":       "arrays",
+          "interval":   0.5,
+          "sequential": false,
+          "tags": [
+            " rDavDDNVD",
+            " rDavDDNND",
+            " rDavDDB",
+            " rDavDDV",
+            " rDavDDA1",
+            " rDavDDA2",
+            " rDavDDPr",
+            " rDavDDVD1",
+            " rDavDDVD2",
+            " rDavDDND1",
+            " rDavDDND2",
+            " rRasxodomer",
+            " rDavReserve1",
+            " rDavReserve2",
+            "inProcess",
+            "End"
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+ 
+
