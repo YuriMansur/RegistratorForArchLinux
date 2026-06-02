@@ -43,14 +43,15 @@ ROOT = SCRIPT.parent.parent
 # CLI:
 #     python deploy_config.py configs/_170
 
-# Собираем кандидаты: дефолтный server/config + всё что есть в configs/*.
+# Собираем кандидаты — только подпапки configs/* (пресеты под разные стенды).
 candidates: list[Path] = []
-default_source = ROOT / "server" / "config"
-if default_source.is_dir():
-    candidates.append(default_source)
 configs_root = ROOT / "configs"
 if configs_root.is_dir():
     candidates.extend(sorted(p for p in configs_root.iterdir() if p.is_dir()))
+if not candidates:
+    print(f"Ошибка: в {configs_root} нет подпапок с конфигами.")
+    ssh.close()
+    sys.exit(1)
 
 if len(sys.argv) >= 2 and sys.argv[1].strip():
     # CLI: путь может быть относительным (от корня проекта) или абсолютным.
@@ -61,7 +62,7 @@ if len(sys.argv) >= 2 and sys.argv[1].strip():
     config_dir = config_dir.resolve()
     print(f"Источник из аргумента: {config_dir}")
 else:
-    # Интерактивный выбор: показываем все варианты + Enter принимает первый (дефолт).
+    # Интерактивный выбор из подпапок configs/. Enter принимает первый вариант.
     print("Откуда брать конфиги:")
     for i, p in enumerate(candidates):
         # Показываем путь относительно корня — короче и читаемее.
@@ -69,8 +70,7 @@ else:
             shown = p.relative_to(ROOT).as_posix()
         except ValueError:
             shown = str(p)
-        marker = " (по умолчанию)" if i == 0 else ""
-        print(f"  [{i}] {shown}{marker}")
+        print(f"  [{i}] {shown}")
     choice = input("Номер варианта (Enter = 0): ").strip()
     idx = int(choice) if choice else 0
     if idx < 0 or idx >= len(candidates):
