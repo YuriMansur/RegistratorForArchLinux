@@ -451,6 +451,9 @@ class TrendsWidget(QWidget):
     # Панель каналов
         ch_frame = QFrame()
         self._ch_frame = ch_frame
+        # Фиксированная небольшая ширина панели: длинные подписи больше не растягивают
+        # панель, а уезжают под горизонтальный скролл (см. _ch_scroll и _update_panel_width).
+        ch_frame.setFixedWidth(200)
         # Установка имени объекта для панели каналов
         ch_frame.setObjectName("chPanel")
         # Применение стиля к панели каналов
@@ -485,7 +488,7 @@ class TrendsWidget(QWidget):
     # Заголовок панели каналов
         self._ch_scroll = QScrollArea()
         self._ch_scroll.setWidgetResizable(True)
-        self._ch_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._ch_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._ch_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._ch_scroll.setStyleSheet("""
             QScrollBar:vertical {
@@ -505,6 +508,27 @@ class TrendsWidget(QWidget):
             QScrollBar::sub-line:vertical,
             QScrollBar::add-page:vertical,
             QScrollBar::sub-page:vertical {
+                background: transparent;
+                height: 0px;
+                width: 0px;
+            }
+            QScrollBar:horizontal {
+                height: 6px;
+                background: transparent;
+                margin: 0px;
+            }
+            QScrollBar::handle:horizontal {
+                background: rgba(120, 120, 120, 200);
+                border-radius: 3px;
+                min-width: 20px;
+            }
+            QScrollBar::handle:horizontal:hover {
+                background: rgba(160, 160, 160, 220);
+            }
+            QScrollBar::add-line:horizontal,
+            QScrollBar::sub-line:horizontal,
+            QScrollBar::add-page:horizontal,
+            QScrollBar::sub-page:horizontal {
                 background: transparent;
                 height: 0px;
                 width: 0px;
@@ -738,7 +762,11 @@ class TrendsWidget(QWidget):
             if item and item.widget():
                 max_w = max(max_w, item.widget().sizeHint().width())
         if max_w > 0:
-            self._ch_frame.setFixedWidth(max_w + 24)
+            # Ширина самой панели фиксирована (см. ch_frame.setFixedWidth выше).
+            # Здесь задаём минимальную ширину контейнеру строк: если самая длинная
+            # подпись шире видимой области — появляется горизонтальный скролл,
+            # а не обрезка и не растягивание панели.
+            self._ch_container.setMinimumWidth(max_w + 4)
 
     def _make_channel_row(self, name: str) -> QWidget:
         ch = self._channels[name]

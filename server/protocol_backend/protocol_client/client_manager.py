@@ -106,6 +106,23 @@ _CONTROL_TAGS: set[str] = {
     for node_id in srv["control"].values()
 }
 
+# «Белый список» NodeId активного конфига — все теги, объявленные в секциях "tags".
+# По нему отсеиваются «осадочные» теги от прежних пресетов (см. is_configured_node).
+_CONFIGURED_NODES: frozenset[str] = frozenset(_NODE_NAMES)
+
+# Суффикс массивного элемента вида "...rDavDDB_kPa[3]" — для проверки по базовому NodeId.
+_ARRAY_SUFFIX_RE = re.compile(r"\[\d+\]$")
+
+
+def is_configured_node(node_id: str) -> bool:
+    """True, если NodeId принадлежит активному конфигу (servers.json).
+
+    Массивные элементы хранятся в БД как "{node_id}[i]" — проверяем по базовому
+    NodeId, отрезав суффикс [N]. Используется фильтром /tags/latest и прунингом БД
+    при старте, чтобы теги от ранее задеплоенных пресетов не утекали клиенту."""
+    base = _ARRAY_SUFFIX_RE.sub("", node_id)
+    return base in _CONFIGURED_NODES
+
 
 class ServerManager:
     """Управляет OPC UA серверами. Пишет данные тегов в SQLite через tag_writer."""

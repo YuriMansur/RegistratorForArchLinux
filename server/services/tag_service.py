@@ -5,6 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # ORM-модель таблицы tag_values — последние значения тегов.
 from db.models import TagValue
+# Предикат «тег есть в активном конфиге» — для отсева осадочных тегов прежних пресетов.
+from protocol_backend.protocol_client.client_manager import is_configured_node
 
 
 class TagRepository:
@@ -40,5 +42,10 @@ class TagService:
         self.repo = repo
 
     async def get_all(self) -> list[TagValue]:
-        """Вернуть все теги с последними значениями (делегируем в репозиторий)."""
-        return await self.repo.get_all()
+        """Вернуть теги с последними значениями, отфильтровав осадочные.
+
+        Клиент строит список каналов по этому ответу, а в tag_values могут
+        оставаться теги от ранее задеплоенных на этот стенд пресетов (таблица
+        только пополняется). Отдаём лишь те, что есть в активном servers.json."""
+        rows = await self.repo.get_all()
+        return [r for r in rows if is_configured_node(r.tag_id)]

@@ -66,6 +66,11 @@ async def lifespan(_app: FastAPI):
 
     # ── Startup ───────────────────────────────────────────────────────────────
 
+    # Чистим БД от осадочных тегов прежних пресетов конфига (если стенд переключали).
+    # Делаем до старта OPC UA, чтобы клиент сразу получал только актуальный набор.
+    from db.maintenance import prune_unconfigured_tags
+    prune_unconfigured_tags()
+
     # Создаём ServerManager: конфигурирует OPC UA соединения и колбэки,
     # затем подключается ко всем серверам из конфига _SERVERS
     _server_manager = ServerManager()
