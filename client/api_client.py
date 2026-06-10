@@ -7,6 +7,15 @@ from config import get_base_url
 # 2с — компромисс: не блокируем UI долго при недоступном сервере.
 TIMEOUT = 2
 
+# Один общий Session с пулом соединений (keep-alive) на всё приложение.
+# Раньше каждый вызов создавал новый requests.Session() → новое TCP-соединение на запрос.
+# При частом опросе (trends /tags/live ~2/сек, статусы, usb) это копит сокеты в TIME_WAIT
+# и упирается в эфемерные порты (особенно на Windows) → периодические таймауты /health
+# и «моргание» индикатора подключения, хотя сервер отвечает.
+_session = requests.Session()
+_session.mount("http://",  requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20))
+_session.mount("https://", requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20))
+
 
 def _url(path: str) -> str:
     """Собрать полный URL из базового адреса и пути эндпоинта."""
@@ -14,36 +23,32 @@ def _url(path: str) -> str:
 
 
 def _get(path: str, **kwargs):
-    """Выполнить GET-запрос. Вызывает raise_for_status() при HTTP 4xx/5xx."""
-    with requests.Session() as s:
-        r = s.get(_url(path), **kwargs)
-        # raise_for_status() выбросит HTTPError если код ответа не 2xx.
-        r.raise_for_status()
-        return r
+    """Выполнить GET-запрос через общий Session (keep-alive). raise_for_status() при 4xx/5xx."""
+    r = _session.get(_url(path), **kwargs)
+    # raise_for_status() выбросит HTTPError если код ответа не 2xx.
+    r.raise_for_status()
+    return r
 
 
 def _post(path: str, **kwargs):
-    """Выполнить POST-запрос. Вызывает raise_for_status() при HTTP 4xx/5xx."""
-    with requests.Session() as s:
-        r = s.post(_url(path), **kwargs)
-        r.raise_for_status()
-        return r
+    """Выполнить POST-запрос через общий Session. raise_for_status() при HTTP 4xx/5xx."""
+    r = _session.post(_url(path), **kwargs)
+    r.raise_for_status()
+    return r
 
 
 def _put(path: str, **kwargs):
-    """Выполнить PUT-запрос. Вызывает raise_for_status() при HTTP 4xx/5xx."""
-    with requests.Session() as s:
-        r = s.put(_url(path), **kwargs)
-        r.raise_for_status()
-        return r
+    """Выполнить PUT-запрос через общий Session. raise_for_status() при HTTP 4xx/5xx."""
+    r = _session.put(_url(path), **kwargs)
+    r.raise_for_status()
+    return r
 
 
 def _delete(path: str, **kwargs):
-    """Выполнить DELETE-запрос. Вызывает raise_for_status() при HTTP 4xx/5xx."""
-    with requests.Session() as s:
-        r = s.delete(_url(path), **kwargs)
-        r.raise_for_status()
-        return r
+    """Выполнить DELETE-запрос через общий Session. raise_for_status() при HTTP 4xx/5xx."""
+    r = _session.delete(_url(path), **kwargs)
+    r.raise_for_status()
+    return r
 
 
 def health_check() -> bool:

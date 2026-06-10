@@ -245,12 +245,17 @@ class MainWindow(QMainWindow):
         self._conn_worker.start()
 
     def _on_connection_result(self, ok):
+        # Дебаунс: один случайный таймаут /health не должен ронять статус в «недоступен».
+        # Красный показываем только после 2 неудачных проверок подряд (~до 10с при интервале 5с).
         if ok:
+            self._conn_fail_count = 0
             self._conn_dot.setStyleSheet(_DOT_GREEN)
             self._conn_label.setText("Подключено к серверу")
         else:
-            self._conn_dot.setStyleSheet(_DOT_RED)
-            self._conn_label.setText("Сервер недоступен")
+            self._conn_fail_count = getattr(self, "_conn_fail_count", 0) + 1
+            if self._conn_fail_count >= 2:
+                self._conn_dot.setStyleSheet(_DOT_RED)
+                self._conn_label.setText("Сервер недоступен")
 
     def _poll_experiment(self):
         """Запустить опрос статуса испытания в фоновом потоке."""

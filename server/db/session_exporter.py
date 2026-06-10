@@ -103,8 +103,11 @@ def export_by_date_range(from_dt: datetime, to_dt: datetime) -> None:
         ts = _fmt(to_dt)
         headers, data = _pivot(rows)
         _write_xlsx(session_dir / f"data_{ts}.xlsx", headers, data)
-        _write_docx(session_dir / f"data_{ts}.docx", headers, data, title=f"Данные {_to_local(from_dt)} — {_to_local(to_dt)}")
-        _write_png_per_tag(session_dir, headers, data)
+        pngs = _write_png_per_tag(session_dir, headers, data)
+        _write_docx(session_dir / f"data_{ts}.docx", headers, data,
+                    title=f"Данные {_to_local(from_dt)} — {_to_local(to_dt)}")
+        _write_docx_charts(session_dir / f"data_{ts}_charts.docx", pngs,
+                           title=f"Данные {_to_local(from_dt)} — {_to_local(to_dt)} — графики")
         log.info("Export range done: %d rows → %s", len(rows), session_dir.name)
     except Exception:
         log.exception("Export range failed")
@@ -140,8 +143,10 @@ def _export(test_id: int, session_start: datetime, session_end: datetime) -> Non
     try:
         headers, data = _pivot(rows)
         _write_xlsx(session_dir / f"session_{ts}.xlsx", headers, data)
+        pngs = _write_png_per_tag(session_dir, headers, data)
         _write_docx(session_dir / f"session_{ts}.docx", headers, data, title=f"Испытание №{test_id}")
-        _write_png_per_tag(session_dir, headers, data)
+        _write_docx_charts(session_dir / f"session_{ts}_charts.docx", pngs,
+                           title=f"Испытание №{test_id} — графики")
         log.info("Export done: %d rows → %s", len(rows), session_dir.name)
     except Exception:
         log.exception("Export failed for test_id=%s", test_id)
@@ -231,13 +236,121 @@ def _write_docx(path: Path, headers: list, data: dict, title: str = "") -> None:
     doc.save(path)
 
 
-def _write_png_per_tag(session_dir: Path, headers: list, data: dict) -> None:
-    if not headers or not data:
+def _add_protocol_header(doc) -> None:
+    """Вставить в начало документа пустую шапку «Протокол испытания» (форма ПКБА).
+    Все значения пустые — заполняются вручную в Word после экспорта."""
+    from docx.shared import Pt
+
+    def fill(cell, text, bold=False, size=8):
+        """Записать текст в ячейку (многострочный — через \\n), задать жирность и размер."""
+        cell.text = ""
+        first = cell.paragraphs[0]
+        for i, line in enumerate(str(text).split("\n")):
+            p = first if i == 0 else cell.add_paragraph()
+            run = p.add_run(line)
+            run.bold = bold
+            run.font.size = Pt(size)
+
+    # 6 колонок: три пары «подпись : значение». 11 строк: организация, блок полей, низ.
+    table = doc.add_table(rows=11, cols=6)
+    table.style = "Table Grid"
+
+    # ── Строка 0: организация + блок «Протокол испытания / № / Дата» ─────────────
+    fill(table.cell(0, 0).merge(table.cell(0, 3)),
+         "ЗАО «Пензенское конструкторско-технологическое бюро арматуростроения»",
+         bold=True, size=9)
+    fill(table.cell(0, 4).merge(table.cell(0, 5)),
+         "Протокол испытания\n№\nДата", bold=True, size=8)
+
+    # ── Строки 1–6: три колонки подписей (значения пустые) ───────────────────────
+    left  = ["Предприятие", "Заказчик", "Номер заказа", "МСЛ", "Состав", "Исполнитель"]
+    mid   = ["Вид арматуры", "Обозначение", "Зав №", "Производитель", "Уплотнение"]
+    right = ["DN, мм", "PN", "t вод, С", "t возд, С"]
+    for i, label in enumerate(left):
+        fill(table.cell(1 + i, 0), label, bold=True)
+    for i, label in enumerate(mid):
+        fill(table.cell(1 + i, 2), label, bold=True)
+    for i, label in enumerate(right):
+        fill(table.cell(1 + i, 4), label, bold=True)
+
+    # ── Строка 7: «Испытание на прочность» + широкое свободное поле ───────────────
+    fill(table.cell(7, 0), "Испытание на прочность", bold=True)
+    table.cell(7, 1).merge(table.cell(7, 5))
+
+    # ── Строки 8–10: давления / среда / результат / время ────────────────────────
+    fill(table.cell(8, 0), "Начальное давление", bold=True)
+    fill(table.cell(8, 2), "Испытательная среда", bold=True)
+    table.cell(8, 3).merge(table.cell(8, 5))
+    fill(table.cell(9, 0), "Минимальное давление", bold=True)
+    fill(table.cell(9, 2), "Результат", bold=True)
+    table.cell(9, 3).merge(table.cell(9, 5))
+    fill(table.cell(10, 0), "Время испытания", bold=True)
+    table.cell(10, 2).merge(table.cell(10, 5))
+
+
+def _write_docx_charts(path: Path, images: list[Path] | None, title: str = "") -> None:
+    """Отдельный docx только с графиками (PNG), формат A4 КНИЖНЫЙ.
+    Графики идут подряд с мелким отступом друг от друга (без разрывов страниц):
+    Word сам переносит на новую страницу, когда текущая заполнилась."""
+    if not images:
         return
+
+    from docx import Document
+    from docx.shared import Mm, Pt
+    from docx.enum.section import WD_ORIENT
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    doc = Document()
+
+    # A4 книжный: ширина 210 < высота 297 мм (высота > ширины = книжная).
+    # Поля минимальные — чтобы на странице помещалось больше графиков.
+    section = doc.sections[0]
+    section.orientation = WD_ORIENT.PORTRAIT
+    section.page_width  = Mm(210)
+    section.page_height = Mm(297)
+    section.left_margin   = Mm(8)
+    section.right_margin  = Mm(8)
+    section.top_margin    = Mm(8)
+    section.bottom_margin = Mm(8)
+
+    # Шапка протокола испытания (форма ПКБА) — пустой шаблон под ручное заполнение.
+    _add_protocol_header(doc)
+    # Небольшой отступ между шапкой и первым графиком.
+    doc.add_paragraph()
+
+    # Ширина рабочей области = ширина листа минус поля.
+    usable_width = section.page_width - section.left_margin - section.right_margin
+    for img in images:
+        # Пропускаем отсутствующие файлы — одна битая картинка не валит весь docx.
+        if not Path(img).exists():
+            continue
+        # Добавляем картинку (в свой параграф); разрывов страниц НЕ ставим —
+        # графики идут впритык, перенос на новую страницу делает сам Word.
+        doc.add_picture(str(img), width=usable_width)
+        # Мелкий зазор между графиками: сверху 0, снизу 6 pt (~2 мм) — не впритык, но плотно.
+        p = doc.paragraphs[-1]
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        pf = p.paragraph_format
+        pf.space_before = Pt(0)
+        pf.space_after  = Pt(6)
+        pf.line_spacing = 1.0
+
+    doc.save(path)
+
+
+def _write_png_per_tag(session_dir: Path, headers: list, data: dict) -> list[Path]:
+    """Нарисовать по графику на тег и сохранить trend_*.png.
+    Возвращает список путей созданных PNG (в порядке headers) — нужен чтобы
+    встроить эти же картинки в docx (см. _write_docx)."""
+    if not headers or not data:
+        return []
 
     from collections import defaultdict
     local_tz = datetime.now(timezone.utc).astimezone().tzinfo
     timestamps = sorted(data.keys())
+
+    # Пути созданных PNG — накапливаем для встраивания в Word.
+    created: list[Path] = []
 
     for header in headers:
         tag_times = []
@@ -286,5 +399,9 @@ def _write_png_per_tag(session_dir: Path, headers: list, data: dict) -> None:
         fig.tight_layout()
 
         safe_name = header.replace("/", "_").replace(" ", "_").replace("[", "").replace("]", "")
-        fig.savefig(session_dir / f"trend_{safe_name}.png", dpi=150)
+        out_path = session_dir / f"trend_{safe_name}.png"
+        fig.savefig(out_path, dpi=150)
         plt.close(fig)
+        created.append(out_path)
+
+    return created
