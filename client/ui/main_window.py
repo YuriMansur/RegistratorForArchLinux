@@ -38,6 +38,18 @@ _DOT_RED    = "background-color: #e74c3c; border-radius: 8px;"
 _DOT_YELLOW = "background-color: #f39c12; border-radius: 8px;"
 _DOT_GRAY   = "background-color: #95a5a6; border-radius: 8px;"
 
+# Пороги индикатора подключения (проверка раз в 5с, см. _conn_timer).
+# Штатный рестарт сервера после деплоя (prune + подключение к OPC UA в lifespan)
+# делает /health недоступным на десяток-другой секунд — чтобы это не мигало
+# тревожным красным, сначала показываем жёлтый «Переподключение…», а красный —
+# только при длительной недоступности.
+_CONN_RECONNECT_FAILS = 1   # после 1 неудачи подряд — жёлтый «Переподключение…»
+_CONN_DOWN_FAILS      = 6   # после 6 неудач подряд (~30с) — красный «Сервер недоступен»
+# Гистерезис восстановления: в зелёный возвращаемся только после стольких успешных
+# проверок ПОДРЯД. Иначе во время рестарта, когда /health отвечает с перебоями
+# (то ответил, то нет), индикатор мигал бы зелёный↔жёлтый.
+_CONN_UP_OKS          = 2   # 2 успеха подряд (~10с) до возврата в зелёный
+
 # Функция для создания иконки приложения
 def _make_icon() -> QIcon:
     """Создание иконки приложения: рисование круга с буквой "R" в центре для узнаваемого образа приложения"""
@@ -245,17 +257,40 @@ class MainWindow(QMainWindow):
         self._conn_worker.start()
 
     def _on_connection_result(self, ok):
-        # Дебаунс: один случайный таймаут /health не должен ронять статус в «недоступен».
-        # Красный показываем только после 2 неудачных проверок подряд (~до 10с при интервале 5с).
+        # Маленький автомат состояний индикатора: "up" | "reconnecting" | "down" | None.
+        # Цвет/текст меняем ТОЛЬКО при смене состояния — это само по себе убирает мигание.
+        state = getattr(self, "_conn_state", None)
         if ok:
             self._conn_fail_count = 0
-            self._conn_dot.setStyleSheet(_DOT_GREEN)
-            self._conn_label.setText("Подключено к серверу")
+            ok_count = getattr(self, "_conn_ok_count", 0) + 1
+            self._conn_ok_count = ok_count
+            # В зелёный — либо первое подключение (state None), либо уже зелёный,
+            # либо после _CONN_UP_OKS успехов подряд (гистерезис против мигания).
+            if state is None or state == "up" or ok_count >= _CONN_UP_OKS:
+                if state != "up":
+                    self._conn_state = "up"
+                    self._conn_dot.setStyleSheet(_DOT_GREEN)
+                    self._conn_label.setText("Подключено к серверу")
+                    # Переход в «up» из любого другого состояния (старт или восстановление
+                    # после рестарта) — перечитываем signals.json, чтобы имена тегов
+                    # обновились без ожидания 60-секундного таймера.
+                    self._refresh_signals()
+            # иначе остаёмся в жёлтом «Переподключение…», пока связь не стабилизируется
         else:
+            self._conn_ok_count = 0
             self._conn_fail_count = getattr(self, "_conn_fail_count", 0) + 1
-            if self._conn_fail_count >= 2:
-                self._conn_dot.setStyleSheet(_DOT_RED)
-                self._conn_label.setText("Сервер недоступен")
+            # Долгая недоступность — красный. Короткий провал (рестарт после деплоя) —
+            # жёлтый «Переподключение…», без тревожного мигания в красный.
+            if self._conn_fail_count >= _CONN_DOWN_FAILS:
+                if state != "down":
+                    self._conn_state = "down"
+                    self._conn_dot.setStyleSheet(_DOT_RED)
+                    self._conn_label.setText("Сервер недоступен")
+            elif self._conn_fail_count >= _CONN_RECONNECT_FAILS:
+                if state != "reconnecting":
+                    self._conn_state = "reconnecting"
+                    self._conn_dot.setStyleSheet(_DOT_YELLOW)
+                    self._conn_label.setText("Переподключение…")
 
     def _poll_experiment(self):
         """Запустить опрос статуса испытания в фоновом потоке."""

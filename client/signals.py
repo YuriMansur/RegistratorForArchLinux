@@ -40,6 +40,12 @@ def refresh() -> bool:
     try:
         # api_client.get_signals() сам ставит таймаут 2с — UI не зависает.
         new_cache = api_client.get_signals() or {}
+        # Сервер ответил пустым маппингом (например, ещё инициализируется сразу
+        # после рестарта) — НЕ затираем уже загруженные подписи, иначе имена тегов
+        # на мгновение «падают» в технические. Оставляем прежний кэш до валидного ответа.
+        if not new_cache and _cache:
+            _loaded = True
+            return False
         changed = (new_cache != _cache)
         _cache = new_cache
         _loaded = True
