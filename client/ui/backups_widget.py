@@ -159,6 +159,9 @@ class BackupsWidget(QWidget):
         self._db_files:  list[dict] = []
         self._sys_files: list[dict] = []
         self._list_worker: _ListWorker | None = None
+        # Список, в котором сейчас активное выделение (БД или системные).
+        # Нужен чтобы выделение было одно на оба списка и чтобы знать что скачивать.
+        self._active_list: QListWidget | None = None
         self._setup_ui()
         self._auto_timer = QTimer(self)
         self._auto_timer.timeout.connect(self._refresh)
@@ -204,6 +207,12 @@ class BackupsWidget(QWidget):
         self._sys_list.setMaximumHeight(180)
         root.addWidget(self._sys_list)
 
+        # Выделение взаимоисключающее: выбор в одном списке снимает выбор в другом.
+        self._db_list.itemSelectionChanged.connect(
+            lambda: self._sync_selection(self._db_list, self._sys_list))
+        self._sys_list.itemSelectionChanged.connect(
+            lambda: self._sync_selection(self._sys_list, self._db_list))
+
         root.addStretch()
 
         self._status = QLabel("")
@@ -219,10 +228,31 @@ class BackupsWidget(QWidget):
         self._list_worker.error.connect(self._on_list_error)
         self._list_worker.start()
 
+    def _sync_selection(self, active: QListWidget, other: QListWidget):
+        """Сделать выделение взаимоисключающим между двумя списками.
+        Когда в active что-то выбрано — снимаем выделение в other и запоминаем active.
+        blockSignals защищает от рекурсии: очистка other сама шлёт itemSelectionChanged."""
+        if not active.selectedItems():
+            return
+        self._active_list = active
+        other.blockSignals(True)
+        other.clearSelection()
+        other.setCurrentItem(None)
+        other.blockSignals(False)
+
     def _on_list(self, db_files: list, sys_files: list):
         self._db_files  = db_files
         self._sys_files = sys_files
         self._status.setText("")
+
+        # Запоминаем выбранный файл, чтобы восстановить выделение после перестроения
+        # списков (иначе авто-обновление каждые 30с сбрасывало бы выбор пользователя).
+        prev_name = None
+        prev_is_db = None
+        if self._active_list is not None and self._active_list.selectedItems():
+            prev = self._active_list.selectedItems()[0].data(Qt.ItemDataRole.UserRole)
+            prev_name  = prev["name"]
+            prev_is_db = self._active_list is self._db_list
 
         self._db_list.clear()
         for f in db_files:
@@ -236,6 +266,15 @@ class BackupsWidget(QWidget):
             item.setData(Qt.ItemDataRole.UserRole, f)
             self._sys_list.addItem(item)
 
+        # Восстанавливаем выделение по имени файла в том же списке (если файл ещё есть).
+        if prev_name is not None:
+            target = self._db_list if prev_is_db else self._sys_list
+            for i in range(target.count()):
+                it = target.item(i)
+                if it.data(Qt.ItemDataRole.UserRole)["name"] == prev_name:
+                    target.setCurrentItem(it)  # вызовет _sync_selection и обновит _active_list
+                    break
+
         if not db_files and not sys_files:
             self._status.setText("Бэкапы не найдены")
 
@@ -243,8 +282,10 @@ class BackupsWidget(QWidget):
         self._status.setText(f"Ошибка: {msg}")
 
     def _download(self):
-        # Определяем выбранный элемент из любого из двух списков
-        item = self._db_list.currentItem() or self._sys_list.currentItem()
+        # Берём файл из активного списка (последний, где пользователь выбрал элемент).
+        item = None
+        if self._active_list is not None and self._active_list.selectedItems():
+            item = self._active_list.selectedItems()[0]
         if not item:
             QMessageBox.information(self, "Выбор", "Выберите файл для скачивания.")
             return

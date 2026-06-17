@@ -29,22 +29,31 @@ _ARRAY_SUFFIX_RE = re.compile(r"\[\d+\]$")
 # Кэш загруженного маппинга. Заполняется reload() при импорте модуля.
 _signals: dict[str, dict] = {}
 
+# Белый список базовых имён тегов, чьи графики (PNG) попадают в *_charts.docx.
+# Пустой список = фильтра нет (в docx идут графики всех тегов). См. get_chart_tags().
+_chart_tags: list[str] = []
+
 
 def reload() -> None:
     """Перечитать signals.json. Безопасно вызывать в любой момент времени.
     Если файл отсутствует или повреждён — оставляем пустой маппинг (фоллбек на технические имена)."""
-    global _signals
+    global _signals, _chart_tags
     if not _PATH.exists():
         log.warning("signals.json не найден: %s — подписи и единицы будут пустыми", _PATH)
         _signals = {}
+        _chart_tags = []
         return
     try:
         raw = json.loads(_PATH.read_text(encoding="utf-8"))
         # Принимаем как обёрнутый формат {"signals": {...}}, так и плоский dict.
         _signals = raw.get("signals", raw) if isinstance(raw, dict) else {}
+        # chart_tags — необязательный сосед "signals" на верхнем уровне.
+        ct = raw.get("chart_tags", []) if isinstance(raw, dict) else []
+        _chart_tags = [str(t) for t in ct] if isinstance(ct, list) else []
     except json.JSONDecodeError as e:
         log.error("signals.json повреждён: %s — фоллбек на пустой маппинг", e)
         _signals = {}
+        _chart_tags = []
 
 
 # Загружаем сразу при импорте — модуль готов к использованию без явного reload().
@@ -81,3 +90,10 @@ def get_unit(name: str) -> str:
 def get_all() -> dict[str, dict]:
     """Вернуть весь маппинг {имя: {label, unit}}. Используется эндпоинтом GET /signals."""
     return _signals
+
+
+def get_chart_tags() -> set[str]:
+    """Базовые имена тегов, чьи графики должны попасть в *_charts.docx.
+    Пустое множество = фильтра нет (в docx идут графики всех тегов).
+    Массивные теги задаются базовым именем (rDavDDB_kPa), без суффикса [N]."""
+    return {_split(t)[0] for t in _chart_tags}

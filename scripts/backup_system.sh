@@ -1,6 +1,6 @@
 #!/bin/bash
 BACKUP_DIR=/home/user/system_backups
-KEEP=3
+KEEP=1
 
 mkdir -p $BACKUP_DIR
 DEST=$BACKUP_DIR/system_$(date +%Y-%m-%d_%H-%M-%S).fsa

@@ -41,6 +41,8 @@ ROOT = SCRIPT.parent.parent
 # ── Выбор локальной папки-источника ──────────────────────────────────────────
 # Приоритет: CLI-аргумент > интерактивный выбор из списка > дефолт server/config.
 # CLI:
+#     python deploy_config.py configs/_169_gsi
+#     python deploy_config.py configs/_169_gspi
 #     python deploy_config.py configs/_170
 
 # Собираем кандидаты — только подпапки configs/* (пресеты под разные стенды).

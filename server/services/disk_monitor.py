@@ -23,6 +23,11 @@ DB_MAX_GB      = 50.0   # максимальный размер БД
 DB_TRIM_ROWS   = 10000  # сколько строк удалять за раз
 CHECK_INTERVAL = 60     # секунд между проверками
 
+# Жёсткий лимит на число хранимых бэкапов (помимо очистки по нехватке места).
+# Системные .fsa принадлежат root и чистятся в backup_system.sh (KEEP=1);
+# здесь ограничиваем только БД-бэкапы (их кладёт серверный cron, владелец — user).
+MAX_DB_BACKUPS = 3
+
 
 def _free_gb() -> float:
     return shutil.disk_usage(_HOME).free / 1024**3
@@ -35,6 +40,22 @@ def _db_gb() -> float:
 def _oldest_file(directory: Path, pattern: str = "*") -> Path | None:
     files = sorted(directory.glob(pattern), key=lambda f: f.stat().st_mtime)
     return files[0] if files else None
+
+
+def _enforce_backup_limit(directory: Path, pattern: str, keep: int) -> int:
+    """Оставить только `keep` самых свежих файлов (по mtime), остальные удалить.
+    Возвращает число удалённых файлов. Работает независимо от свободного места."""
+    if not directory.exists():
+        return 0
+    files = sorted(directory.glob(pattern), key=lambda f: f.stat().st_mtime, reverse=True)
+    removed = 0
+    for f in files[keep:]:
+        try:
+            f.unlink()
+            removed += 1
+        except OSError:
+            logger.exception("Не удалось удалить лишний бэкап: %s", f)
+    return removed
 
 
 async def _trim_history() -> int:
@@ -100,6 +121,12 @@ async def disk_monitor_loop() -> None:
         await asyncio.sleep(CHECK_INTERVAL)
         try:
             _loop_iteration += 1
+
+            # Жёсткий лимит числа БД-бэкапов — независимо от свободного места.
+            db_removed = _enforce_backup_limit(_DB_BACKUPS, "*", MAX_DB_BACKUPS)
+            if db_removed:
+                logger.info("Ротация БД-бэкапов: удалено %d лишних (лимит %d)",
+                            db_removed, MAX_DB_BACKUPS)
 
             # WAL checkpoint — каждые _CHECKPOINT_EVERY итераций
             if _loop_iteration % _CHECKPOINT_EVERY == 0:

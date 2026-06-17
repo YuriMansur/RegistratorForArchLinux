@@ -21,5 +21,14 @@
 
     "inProcess":    { "label": "Идёт испытание",              "unit": "" },
     "End":          { "label": "Конец испытания",             "unit": "" }
-  }
+  },
+
+  "_comment_chart_tags": "Базовые имена тегов, чьи графики (PNG) попадают в *_charts.docx (с шапкой протокола). Пустой список = графики всех тегов. Массивные теги задаются базовым именем без [N].",
+  "chart_tags": [
+    "rDTAT",
+    "rDavDDA", "rDavDDB", "rDavDDB_kPa", "rDavDDN1", "rDavDDN2",
+    "rDavDDP1", "rDavDDP1_1", "rDavDDP2",
+    "rDavReserve1", "rDavReserve2",
+    "rTempDT1", "rTempDT2", "rTempDTB"
+  ]
 }
