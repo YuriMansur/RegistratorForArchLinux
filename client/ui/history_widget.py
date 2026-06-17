@@ -608,10 +608,23 @@ class HistoryController(QObject):
             if it.isExpanded():
                 expanded.add(it.text(0))
 
+        # Запоминаем текущее выделение, чтобы обновление дерева его не сбрасывало
+        # (clear() ниже уничтожает элементы). Идентифицируем по имени папки и,
+        # если выбран файл внутри неё, — по имени файла.
+        sel_folder = sel_file = None
+        cur = self._exports_tree.currentItem()
+        if cur is not None:
+            if cur.parent() is None:
+                sel_folder = cur.text(0)
+            else:
+                sel_folder = cur.parent().text(0)
+                sel_file = cur.text(0)
+
         icon_provider = QFileIconProvider()
         icon_folder = icon_provider.icon(QFileIconProvider.IconType.Folder)
 
         self._exports_tree.clear()
+        to_select = None
         for entry in folders:
             folder_item = QTreeWidgetItem([entry["folder"]])
             folder_item.setIcon(0, icon_folder)
@@ -619,5 +632,15 @@ class HistoryController(QObject):
                 child = QTreeWidgetItem([filename])
                 child.setIcon(0, icon_provider.icon(QFileInfo(filename)))
                 folder_item.addChild(child)
+                # Восстановление выделения файла внутри той же папки.
+                if sel_file is not None and entry["folder"] == sel_folder and filename == sel_file:
+                    to_select = child
             self._exports_tree.addTopLevelItem(folder_item)
             folder_item.setExpanded(entry["folder"] in expanded)
+            # Восстановление выделения самой папки (если был выбран каталог).
+            if sel_file is None and entry["folder"] == sel_folder:
+                to_select = folder_item
+
+        # Возвращаем выделение, если ранее выбранный элемент ещё существует.
+        if to_select is not None:
+            self._exports_tree.setCurrentItem(to_select)

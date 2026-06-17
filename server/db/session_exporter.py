@@ -10,6 +10,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.ticker as mticker
 
 # signals — маппинг технического имени тега в подпись и единицу измерения.
 from services import signals
@@ -475,7 +476,26 @@ def _write_png_per_tag(session_dir: Path, headers: list, data: dict,
         fig, ax = plt.subplots(figsize=(width, 6), dpi=DPI)
         ax.plot(avg_times, avg_values, linewidth=1.2, color="steelblue",
                 marker="o", markersize=3)
+
+        # ── Отметить максимум: точка на кривой + подпись значения (до десятых) ──
+        max_idx = max(range(len(avg_values)), key=lambda i: avg_values[i])
+        max_x, max_y = avg_times[max_idx], avg_values[max_idx]
+        ax.plot(max_x, max_y, marker="o", markersize=8, color="crimson", zorder=5)
+        ax.annotate(
+            f"{max_y:.1f}",
+            xy=(max_x, max_y), xytext=(0, 10), textcoords="offset points",
+            ha="center", va="bottom", fontsize=11, fontweight="bold", color="crimson",
+            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="crimson", alpha=0.85),
+            zorder=6,
+        )
+        # Запас сверху по Y, чтобы подпись максимума не обрезалась краем графика.
+        y_min, y_max = min(avg_values), max(avg_values)
+        y_range = (y_max - y_min) or 1.0
+        ax.set_ylim(y_min - y_range * 0.05, y_max + y_range * 0.15)
+
         ax.set_xlim(avg_times[0], avg_times[-1])
+        # Подписи оси Y — до десятых.
+        ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.1f"))
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=local_tz))
         ax.xaxis.set_major_locator(mdates.AutoDateLocator())
         fig.autofmt_xdate()

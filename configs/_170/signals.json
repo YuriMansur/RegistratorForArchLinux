@@ -2,7 +2,7 @@
   "_comment": "Маппинг технического имени тега → русская подпись + единица измерения. Подписи ниже — мои догадки из имён тегов; правьте под фактический смысл. Массивные теги (rDavDDB_kPa[0], [1]…) сопоставляются по базовому имени, индекс [N] добавляется к подписи автоматически.",
 
   "signals": {
-    "rDavDDNVD":    { "label": "Давление до насоса НВД (ДДНВД)",                              "unit": "°C" },
+    "rDavDDNVD":    { "label": "Давление до насоса НВД (ДДНВД)",                              "unit": "Мпа" },
     "rDavDDNND":    { "label": "Давление до насоса ННД (ДДННД)",                              "unit": "МПа" },
     "rDavDDB":      { "label": "Давление в баке (ДДБ)",                                       "unit": "МПа" },
     "rDavDDV":      { "label": "Давление возвратной линии (промывки) (ДДВ)",                  "unit": "кПа" },
@@ -13,9 +13,12 @@
     "rDavDDVD2":    { "label": "Давление РЖ в линии ВД2 (ДДВД2)",                             "unit": "МПа" },
     "rDavDDND1":    { "label": "Давление РЖ в линии НД1 (ДДНД1)",                             "unit": "МПа" },
     "rDavDDND2":    { "label": "Давление РЖ в линии НД2 (ДДНД2)",                             "unit": "МПа" },
-    "rRasxodomer":  { "label": "Расходомер",                                                  "unit": "/c" },
-    "rDavReserve1": { "label": "Резерв давления 1",                                           "unit": "°C" },
-    "rDavReserve2": { "label": "Резерв давления 2",                                           "unit": "°C" },
+    "rRasxodomer":  { "label": "Расходомер РМ",                                               "unit": "л/м" },
+    "rDavReserve1": { "label": "Давление ДД",                                                 "unit": "МПа" },
+    "rDavReserve2": { "label": "Резерв давления 2",                                           "unit": "МПа" },
+    "rTempDTB":     { "label": "Температура ДТБ",                                             "unit": "°C" },
+    "rTempDTV":     { "label": "Температура ДТВ",                                             "unit": "°C" },
+    "rDTAT":        { "label": "Температура ДTАТ",                                            "unit": "°C" },
 
     "inProcess":    { "label": "Идёт испытание",              "unit": "" },
     "End":          { "label": "Конец испытания",             "unit": "" }
@@ -27,7 +30,7 @@
     "rDavDDA1", "rDavDDA2", "rDavDDPr",
     "rDavDDVD1", "rDavDDVD2", "rDavDDND1", "rDavDDND2",
     "rRasxodomer",
-    "rDavReserve1", "rDavReserve2"
+    "rDavReserve1", "rDavReserve2","rTempDTB", "rTempDTV", "rDTAT" 
   ]
 }
 

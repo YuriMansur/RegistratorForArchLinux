@@ -18,9 +18,12 @@
         "rDavDDVD2":    "Application.SensorsHandler.rDavDDVD2",
         "rDavDDND1":    "Application.SensorsHandler.rDavDDND1",
         "rDavDDND2":    "Application.SensorsHandler.rDavDDND2",
-        "rRasxodomer":  "Application.SensorsHandler.rRasxodomer",
+        "rRasxodomer":  "Application.Control.rRasxodomer",
         "rDavReserve1": "Application.SensorsHandler.rDavReserve1",
         "rDavReserve2": "Application.SensorsHandler.rDavReserve2", 
+        "rTempDTB":     "Application.SensorsHandler.rTempDTB", 
+        "rTempDTV":     "Application.SensorsHandler.rTempDTV", 
+        "rDTAT":         "Application.SensorsHandler.rDTAT", 
         "inProcess":    "Application.Control.inProcess",
         "End":          "Application.Control.End"
       },
@@ -49,6 +52,9 @@
             "rRasxodomer",
             "rDavReserve1",
             "rDavReserve2",
+            "rTempDTB",
+            "rTempDTV",
+            "rDTAT",   
             "inProcess",
             "End"
           ]
