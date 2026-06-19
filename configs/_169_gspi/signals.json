@@ -2,32 +2,50 @@
   "_comment": "Маппинг технического имени тега → русская подпись + единица измерения. Подписи ниже — мои догадки из имён тегов; правьте под фактический смысл. Массивные теги (rDavDDB_kPa[0], [1]…) сопоставляются по базовому имени, индекс [N] добавляется к подписи автоматически.",
 
   "signals": {
-    "rDTAT":        { "label": "Температура ДТАТ",            "unit": "°C" },
 
-    "rDavDDA":      { "label": "Давление ДДА",                "unit": "МПа" },
-    "rDavDDB":      { "label": "Давление ДДБ",                "unit": "%" },
-    "rDavDDN1":     { "label": "Давление ДДН-1",              "unit": "МПа" },
-    "rDavDDN2":     { "label": "Давление ДДН-2",              "unit": "МПа" },
-    "rDavDDP1":     { "label": "Давление ДДП-1",              "unit": "МПа" },
-    "rDavDDP1_1":   { "label": "Давление ДДП-1.1",            "unit": "МПа" },
-    "rDavDDP2":     { "label": "Давление ДДП-2",              "unit": "МПа" },
-    "rDavReserve1": { "label": "Давление ДД",                 "unit": "МПа" },
-    "rDavReserve2": { "label": "Резерв",                      "unit": "МПа" },
-
-    "rTempDT1":     { "label": "Температура ДТ-1",            "unit": "°C" },
-    "rTempDT2":     { "label": "Температура ДТ-2",            "unit": "°C" },
-    "rTempDTB":     { "label": "Температура ДТБ",             "unit": "°C" },
-
-    "inProcess":    { "label": "Идёт испытание",              "unit": "" },
-    "End":          { "label": "Конец испытания",             "unit": "" }
+    "rDavDDNVD1_BP1":      { "label": "Давление ДДНВД1",                  "unit": "кПа" },
+    "rDavDDNVD2_BP2":      { "label": "Давление ДДНВД2",                  "unit": "кПа" },
+    "rDavDDNND1_BP3":      { "label": "Давление ДДННД1",                  "unit": "кПа" },
+    "rDavDDNND2_BP4":      { "label": "Давление ДДННД2",                  "unit": "кПа" },
+    "rDavDDB_BP5":         { "label": "Давление ДДБ",                     "unit": "МПа" },
+    "rDavDDA1_BP6":        { "label": "Давление ДДА1",                    "unit": "МПа" },
+    "rDavDDA2_BP7":        { "label": "Давление ДДА2",                    "unit": "МПа" },
+    "rDavDDPr_BP8":        { "label": "Давление ДДПр",                    "unit": "МПа" },
+    "rDavDDVD_BP9":        { "label": "Давление ДДВД",                    "unit": "МПа" },
+    "rDavDDND_BP10":       { "label": "Давление ДДНД",                    "unit": "МПа" },
+    "rDavDDV_BP11":        { "label": "Давление ДДВ",                     "unit": "МПа" },
+    "rDavReserve1":        { "label": "Давление ДД1",                     "unit": "МПа" },
+    "rDavReserve2":        { "label": "Давление ДД2",                     "unit": "МПа" },
+    "rTempDTB":            { "label": "Температура ДТБ",                  "unit": "°C" },
+    "rTempDT1":            { "label": "Температура ДТ1",                  "unit": "°C" },
+    "rTempDTV":            { "label": "Температура ДТВ возвратной линии", "unit": "°C" },
+    "rDTAT":               { "label": "Температура ДТАТ",                 "unit": "°C" },
+    "rTempAir":            { "label": "Температура окружающей среды",     "unit": "°C" },
+    "rRasxodomer":         { "label": "Расходомер",                       "unit": "л/мин" },
+    "inProcess":           { "label": "Идёт испытание",                   "unit": "" },
+    "End":                 { "label": "Конец испытания",                  "unit": "" }
   },
 
   "_comment_chart_tags": "Базовые имена тегов, чьи графики (PNG) попадают в *_charts.docx (с шапкой протокола). Пустой список = графики всех тегов. Массивные теги задаются базовым именем без [N].",
   "chart_tags": [
-    "rDTAT",
-    "rDavDDA", "rDavDDB", "rDavDDN1", "rDavDDN2",
-    "rDavDDP1", "rDavDDP1_1", "rDavDDP2",
-    "rDavReserve1", "rDavReserve2",
-    "rTempDT1", "rTempDT2", "rTempDTB"
+   "rDavDDNVD1_BP1",
+   "rDavDDNVD2_BP2",
+   "rDavDDNND1_BP3",
+   "rDavDDNND2_BP4",
+   "rDavDDB_BP5",  
+   "rDavDDA1_BP6",  
+   "rDavDDA2_BP7",  
+   "rDavDDPr_BP8",  
+   "rDavDDVD_BP9", 
+   "rDavDDND_BP10", 
+   "rDavDDV_BP11",  
+   "rDavReserve1",  
+   "rDavReserve2",  
+   "rTempDTB",      
+   "rTempDT1",      
+   "rTempDTV",      
+   "rDTAT",         
+   "rTempAir",      
+   "rRasxodomer"
   ]
 }

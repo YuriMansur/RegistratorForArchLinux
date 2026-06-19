@@ -13,7 +13,7 @@
     "rDavDDVD2":    { "label": "Давление РЖ в линии ВД2 (ДДВД2)",                             "unit": "МПа" },
     "rDavDDND1":    { "label": "Давление РЖ в линии НД1 (ДДНД1)",                             "unit": "МПа" },
     "rDavDDND2":    { "label": "Давление РЖ в линии НД2 (ДДНД2)",                             "unit": "МПа" },
-    "rRasxodomer":  { "label": "Расходомер РМ",                                               "unit": "л/м" },
+    "rRasxodomer":  { "label": "Расходомер РМ",                                               "unit": "л/мин" },
     "rDavReserve1": { "label": "Давление ДД",                                                 "unit": "МПа" },
     "rDavReserve2": { "label": "Резерв давления 2",                                           "unit": "МПа" },
     "rTempDTB":     { "label": "Температура ДТБ",                                             "unit": "°C" },
@@ -26,11 +26,23 @@
 
   "_comment_chart_tags": "Базовые имена тегов, чьи графики (PNG) попадают в *_charts.docx (с шапкой протокола). Пустой список = графики всех тегов. Массивные теги задаются базовым именем без [N].",
   "chart_tags": [
-    "rDavDDNVD", "rDavDDNND", "rDavDDB", "rDavDDV",
-    "rDavDDA1", "rDavDDA2", "rDavDDPr",
-    "rDavDDVD1", "rDavDDVD2", "rDavDDND1", "rDavDDND2",
+    "rDavDDNVD",
+    "rDavDDNND",
+    "rDavDDB",
+    "rDavDDV",
+    "rDavDDA1",
+    "rDavDDA2",
+    "rDavDDPr",
+    "rDavDDVD1",
+    "rDavDDVD2",
+    "rDavDDND1",
+    "rDavDDND2",
     "rRasxodomer",
-    "rDavReserve1", "rDavReserve2","rTempDTB", "rTempDTV", "rDTAT" 
+    "rDavReserve1",
+    "rDavReserve2",
+    "rTempDTB",
+    "rTempDTV",
+    "rDTAT" 
   ]
 }
 
