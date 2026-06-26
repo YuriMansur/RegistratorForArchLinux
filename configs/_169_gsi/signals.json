@@ -12,7 +12,6 @@
     "rDavDDP1_1":   { "label": "Давление ДДП-1.1",            "unit": "МПа" },
     "rDavDDP2":     { "label": "Давление ДДП-2",              "unit": "МПа" },
     "rDavReserve1": { "label": "Давление ДД",                 "unit": "МПа" },
-    "rDavReserve2": { "label": "Резерв",                      "unit": "МПа" },
 
     "rTempDT1":     { "label": "Температура ДТ-1",            "unit": "°C" },
     "rTempDT2":     { "label": "Температура ДТ-2",            "unit": "°C" },
@@ -27,7 +26,7 @@
     "rDTAT",
     "rDavDDA", "rDavDDB", "rDavDDN1", "rDavDDN2",
     "rDavDDP1", "rDavDDP1_1", "rDavDDP2",
-    "rDavReserve1", "rDavReserve2",
+    "rDavReserve1",
     "rTempDT1", "rTempDT2", "rTempDTB"
   ]
 }

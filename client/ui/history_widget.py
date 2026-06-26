@@ -413,12 +413,13 @@ class HistoryController(QObject):
             return
 
         class _W(QThread):
-            done = pyqtSignal(list)
+            # object, чтобы отличать None (ошибка связи) от [] (БД реально пуста).
+            done = pyqtSignal(object)
             def run(self):
                 try:
                     self.done.emit(api_client.get_checkouts())
                 except Exception:
-                    self.done.emit([])
+                    self.done.emit(None)
 
         w = _W()
         w.done.connect(self._apply_checkouts)
@@ -426,7 +427,9 @@ class HistoryController(QObject):
         self._checkouts_worker = w
 
     def _apply_checkouts(self, checkouts):
-        if not checkouts:
+        # None — сервер недоступен: список не трогаем. [] — БД пуста (например, после
+        # очистки): перестраиваем комбобокс, чтобы старые испытания исчезли без рестарта.
+        if checkouts is None:
             return
         self._checkouts = checkouts
 
@@ -600,6 +603,14 @@ class HistoryController(QObject):
     def _apply_exports(self, folders):
         if folders is None:
             return
+
+        # Пропускаем перестроение дерева, если состав папок/файлов не изменился.
+        # Иначе авто-обновление каждые 5с пересоздаёт все элементы → мерцание и
+        # «боунсинг»: раскрытие/выделение слетает в момент, когда юзер открывает папку.
+        sig = tuple((e["folder"], tuple(e["files"])) for e in folders)
+        if sig == getattr(self, "_exports_sig", None):
+            return
+        self._exports_sig = sig
 
         expanded = set()
         root = self._exports_tree.invisibleRootItem()

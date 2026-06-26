@@ -27,6 +27,12 @@ server.pid
 # Claude Code local settings
 .claude/
 
+# PyInstaller build artifacts
+client/build/
+client/dist/
+client/*.spec
+client/app_icon.ico
+
 # OS
 .DS_Store
 Thumbs.db

@@ -1,10 +1,28 @@
 # json — для чтения и записи конфига в формате JSON.
 import json
+# os — доступ к %APPDATA% для пути конфига установленного приложения.
+import os
+# sys — определить, запущено ли приложение из собранного .exe (PyInstaller).
+import sys
 # Path — для удобной работы с путями к файлам.
 from pathlib import Path
 
-# Путь к файлу конфига: client/config/config.json.
-CONFIG_FILE = Path(__file__).parent / "config" / "config.json"
+
+def _config_dir() -> Path:
+    """Папка с config.json.
+    - Установленное приложение (PyInstaller, sys.frozen): %APPDATA%\\Registrator —
+      доступно на запись при установке в Program Files / %LOCALAPPDATA%, настройки
+      переживают переустановку и удаление приложения.
+    - Запуск из исходников: client/config/.
+    """
+    if getattr(sys, "frozen", False):
+        base = os.environ.get("APPDATA") or str(Path.home())
+        return Path(base) / "Registrator"
+    return Path(__file__).parent / "config"
+
+
+# Путь к файлу конфига.
+CONFIG_FILE = _config_dir() / "config.json"
 
 # IP-адрес сервера по умолчанию — используется если config.json не существует.
 DEFAULT_HOST = "192.168.100.100"
